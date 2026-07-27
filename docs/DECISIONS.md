@@ -183,3 +183,129 @@ collision fails loudly instead of drifting to 5185) and the stage renders at exa
 no horizontal scroll · `npm test` **169 green across 13 files** · `npm run build` clean, base
 path `/BorgM1/` · `npm run typecheck` clean · the JSON round-trip test exists from day one, 21
 cases, not retrofitted.
+
+---
+
+## 2026-07-27 — Phase 1: sample pipeline
+
+**Both sound lists are recovered and pinned.** 100 multisounds and 44 drums, transcribed from
+the Owner's Manual and cross-checked across four OCR passes of two scans. Both lists are
+printed *twice* in the manual in different layouts, which resolved the two OCR ambiguities
+without circularity: `68 BasThumNT2` (one pass duplicated NT1) and `76 VoiceWvNT2` (lowercase
+`t`). The decoy drum list in the overview section is avoided and a test asserts its names never
+appear. **`NT` is confirmed from the manual, not inferred** — "(NT) = same pitch regardless of
+key played", i.e. No Tracking, a fixed-pitch flag.
+
+**`sharesSampleWith` is declared data, not derived from names.** An NT multisound is the same
+ROM sample with tracking off, so the build must not source a second sample for it — an
+independently sourced one would make the pair audibly different where the hardware's are
+identical. The LCD abbreviations defeat any name heuristic (`DistNT`→`Distortion`,
+`BasThumNT1`→`BassThumb`, `VoiceWvNT1`→`VoiceWave`) and a match loose enough to catch them
+would pair unrelated sounds. Useful consequence: **only 63 of the 100 multisounds need a sample
+sourced** — 14 are NT references, 23 are the computed DWGS block.
+
+**Indexing is deliberately non-uniform.** Multisounds are 0-based, drums are 1-based, exactly
+as the manual prints them and as the SysEx values run. Pinned by test so nobody "fixes" it.
+
+**The bake order is the load-bearing decision:** rebase → resample → normalize → crossfade →
+truncate+guard → int16. Each step consumes signal a later one needs. Truncating early is the
+tempting optimisation and it is a bug: the resampler kernel and the crossfade read window both
+reach past `loopEnd` into the release tail, so cutting first makes both read zeros and puts a
+notch at exactly the seam the pipeline exists to protect.
+
+**Crossfade is equal-GAIN, not equal-power. Labelled a choice, not an M1 fact.** The two
+blended regions are the same tone one loop-period apart, so they correlate, and a sin/cos pair
+bulges up to +3 dB mid-fade — heard as a swell at exactly the loop rate.
+
+**Loop LENGTH is scaled, not the end point.** Rounding both loop points independently lets the
+length drift a sample; length is the pitch-critical quantity, so the error lands as ~8 cents of
+detune on the sustain only, appearing the moment a note reaches its loop. Swept 1600 cases: the
+invariant always holds, the naive form drifts on 100+ of them.
+
+**Int16 scale is 32767, not 32768.** Scaling by 32768 puts +1.0 on a code that does not exist;
+it wraps to −32768, inverting a full-scale positive peak into a full-scale negative one — the
+loudest possible click, on precisely the samples most likely to reach 1.0.
+
+### Measured against the real FluidR3_GM, not assumed
+
+`scripts/probeSf2.ts` exists to answer these from the file rather than from documentation. Both
+answers change the extractor.
+
+- **`spessasynth_core` already rebases loop points.** They are relative to each sample, not
+  absolute into the global `smpl` chunk. **Do not subtract `dwStart` again** — the extractor
+  passes `dwStart: 0`. (`rebaseLoop` stays in `loopCore` for a future raw-RIFF path, and
+  because it documents the trap.)
+- **`loopEnd` is EXCLUSIVE**: loop length = `loopEnd − loopStart`. This matters because
+  **spessasynth_core's own docs contradict each other** — the field comment says exclusive, the
+  constructor's `@param` says inclusive. Measured by periodicity (under a period *L*, the
+  window before `loopStart` must match the window before `loopEnd`): **1013 exclusive vs 66
+  inclusive** across 1094 samples, mean mismatch ratio 4.0. Agrees with the SF2 spec.
+- **A weak metric gave a confidently wrong answer first.** Comparing single samples either side
+  of the wrap by value said INCLUSIVE, 858 to 366. Two adjacent samples on a smooth waveform
+  are nearly equal, so that test measures which one happens to sit closer in value, not which
+  one precedes the other. Worth remembering the next time a cheap check looks decisive.
+- FluidR3_GM: 189 presets, 193 instruments, 1418 samples, **100% of them looped**. Rates are
+  mostly 44100 (817) and 32000 (328) — 328 already sit at the target rate and pass through the
+  resampler as a copy.
+
+**The SF2 is not vendored.** 141 MB for a file the app never loads (it loads the *built bank*).
+`scripts/bankConfig.ts` resolves it from `BORGM1_SF2`, then `assets/`, then a sibling project's
+copy — read-only.
+
+### Building the bank
+
+**One blob, not hundreds of files.** `bank.pcm` (all samples, Int16LE, concatenated) plus
+`bank.json` (keymap + per-sample offset/length/loop/root/tuning). The factory bank belongs in
+the Cache API, and one entry fetched once beats ~600 conditional requests. Result: **50 MiB,
+479 distinct samples, 594 key zones, 100/100 multisounds, 44/44 drums.**
+
+**Zones are inherited, not invented.** For each source preset the builder walks all 128 keys
+asking the SoundFont which sample would sound, and groups runs that answer the same. That
+reproduces FluidR3's own zone boundaries (typically 9 per instrument) instead of guessing them
+— and dense key zones are exactly where the absent 1988 size ceiling is worth spending, because
+keeping the pitch ratio near 1.0 matters more than interpolation quality.
+
+**GM program numbers, not FluidR3 internals.** Every entry in `data/sourceMap.ts` names a
+General MIDI program, so swapping in a better-sourced SF2 later is a config change.
+
+**`approx` is an upgrade shortlist, not an apology.** 39 multisounds and 12 drums are marked
+it: GM simply has no slot for `Lore`, `PanWave`, `FvWave`, `MvWave`, `Wire`, `Rhythm` — M1
+synthesised textures — or for one-shot percussion like `Pole`, `Drop`, `Pop`. Each maps to the
+nearest timbre and is flagged, so once the instrument is playable it is possible to hear which
+substitutions actually hurt and re-source only those. A test asserts the *core* instruments
+(pianos, organs, flute, choir, strings, trumpet) are NOT flagged, or the list would be noise.
+
+**The three kicks come from three different kits** (Standard / Room / TR-808), and the two
+hi-hat pairs from two. Sourcing `Kick1/2/3` from one kit three times would give three identical
+kicks where the M1 has three distinct ones. Pinned by test.
+
+**DWGS 77–99 are rendered additively, not sampled — and that is authentic.** DWGS was Korg's
+*Digital Waveform Generator System*: stored harmonic amplitude tables, summed. Doing the same
+here means the method is right even though the tables are ours. Three further benefits: the
+result is band-limited by construction (no partial above Nyquist is ever created, so there is
+nothing to alias), the loop is seamless by construction (the table IS exactly one period), and
+it runs in plain Node where there is no `OfflineAudioContext`.
+
+**256 samples at 32 kHz = 125 Hz = MIDI 47 + 21 cents.** An integer table length is what makes
+the loop exact; the odd root pitch is the price and is carried in the manifest. A test pins all
+three constants together, since moving one without the others detunes every synthesized sound.
+
+**Six DWGS tables are exact, seventeen are authored.** The geometric waves have closed-form
+Fourier definitions and are exactly right. Everything named `DWGS <instrument>` is an
+approximation of a timbre Korg never published — flagged `exact: false`, and a test requires
+each to carry a note explaining where its shape came from. **Label the guesses.**
+
+### The gate runs on the build, not only on fixtures
+
+`buildBank.ts` measures loop-seam continuity on **every looped sample it emits** and fails the
+build if any exceeds the limit. A unit test proves the algorithm is right on fixtures; this
+proves the actual output is right on the actual data. Currently **451/451 pass**.
+
+**The gate caught a bug in itself first.** The initial metric normalised the wrap step against
+the steepest step in the loop's last 64 samples, and failed the square, saw and comb tables —
+all of which are periodic by construction and therefore *cannot* click. A square wave is flat
+across most of its cycle and steps rail-to-rail once, so a tail-only window usually misses that
+edge, under-reads the waveform's natural step size by orders of magnitude, and calls an exact
+loop broken. Fixed by scanning the whole loop. The question the metric asks is "is the move at
+the wrap unusual **for this waveform**?", and that only works if the scale comes from the whole
+waveform.

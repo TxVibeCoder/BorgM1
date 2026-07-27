@@ -7,13 +7,22 @@ envelopes, a 33-algorithm effects section, 8-timbre Combinations, and (optionall
 sequencer. Korg's official factory bank has been decoded, so the 100 factory programs and 100
 combinations are **importable, not reconstructable**.
 
-**Status: Phase 0 complete** — forked, gutted, scaffolded. `npm run dev` serves an empty shell
-on port 5184; 169 unit tests, typecheck and build all green. Phase 1 (the sample pipeline) is
-next. Repo: `github.com/TxVibeCoder/BorgM1`.
+**Status: Phases 0–1 complete.** The shell boots on port 5184 and one command builds the full
+sample bank — 100 multisounds, 44 drum sounds, 594 key zones, every loop seam verified.
+Phase 2 (the voice engine) is next. Repo: `github.com/TxVibeCoder/BorgM1`.
 
 ```bash
 npm install && npm run dev
 ```
+
+Building the sample bank needs a copy of **FluidR3_GM.sf2** (MIT, 141 MB — not vendored).
+Point `BORGM1_SF2` at it or drop it in `assets/`, then:
+
+```bash
+npm run build:bank
+```
+
+Sources and licences are in [`CREDITS.md`](CREDITS.md).
 
 ## Start here
 
