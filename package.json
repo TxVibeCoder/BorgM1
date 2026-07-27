@@ -1,5 +1,5 @@
 {
-  "name": "synthstack",
+  "name": "borgm1",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -13,9 +13,7 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
-    "test:audio": "playwright test audioBattery",
-    "test:measure": "playwright test --config playwright.measure.config.ts"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "react": "^18.3.1",

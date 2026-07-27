@@ -1,5 +1,5 @@
 @echo off
-rem SynthStack launcher (Windows). Runs the dev server (hot reload, always current
+rem BorgM1 launcher (Windows). Runs the dev server (hot reload, always current
 rem source) and opens the browser at the right URL once the server is ready.
 cd /d "%~dp0"
 where node >nul 2>nul
@@ -14,5 +14,6 @@ if not exist node_modules (
 )
 rem --open lets Vite launch the browser AFTER it is listening (no connect-refused
 rem race, and it uses the dev base '/' so assets resolve — unlike a preview of the
-rem '/SynthStack/' Pages build, which 404s its scripts at localhost root).
+rem '/BorgM1/' Pages build, which 404s its scripts at localhost root).
+rem Port is pinned to 5184 by vite.config.ts (strictPort), not by a flag here.
 call npm run dev -- --open
