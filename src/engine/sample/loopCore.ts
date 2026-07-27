@@ -135,10 +135,14 @@ export function truncateWithGuard(data: Float32Array, region: LoopRegion): Float
  * Wrap discontinuity, measured in units of the sample's OWN steepest local step.
  *
  * This is the Phase 1 gate's measurement. It compares the jump playback actually takes at
- * the wrap (`loopEnd-1` -> `loopStart`) against the largest adjacent-sample step just
- * inside the loop. Self-relative on purpose: an absolute threshold fails every bright
- * sample and passes every quiet one, because a loud 5 kHz tone moves further between
- * consecutive samples than a quiet 200 Hz one does at a genuine cut.
+ * the wrap (`loopEnd-1` -> `loopStart`) against the largest adjacent-sample step anywhere
+ * in the loop. Self-relative on purpose: an absolute threshold fails every bright sample
+ * and passes every quiet one, because a loud 5 kHz tone moves further between consecutive
+ * samples than a quiet 200 Hz one does at a genuine cut.
+ *
+ * The question it actually asks is "is the move at the wrap UNUSUAL for this waveform?" —
+ * which is why the scale comes from the whole loop. A square wave steps from rail to rail
+ * once per cycle, so a step at the wrap is only a defect if it is bigger than that.
  *
  * READING THE SCALE — it does not bottom out at 0:
  *   ~1  a perfect loop. The wrap still moves one sample's worth, because that is what the
@@ -152,17 +156,24 @@ export function loopSeamDiscontinuity(data: Float32Array, region: LoopRegion): n
   const last = data[loopEnd - 1]!;
   const first = data[loopStart]!;
   const step = Math.abs(first - last);
-  // Typical adjacent-sample step just inside the loop, as the scale to judge against.
+  const loopLength = loopEnd - loopStart;
+  if (loopLength < 2) return step;
+
+  // Steepest adjacent-sample step anywhere IN THE LOOP — the waveform's own character.
+  //
+  // Scanning the WHOLE loop, not just the tail. A square, saw or pulse is flat across most
+  // of its cycle and steps hugely once at its edge; measuring the scale from the last few
+  // dozen samples usually misses that edge entirely, under-reads the natural step size by
+  // orders of magnitude, and reports a mathematically exact single-cycle table as badly
+  // broken. Found exactly that way — the first three failures of this gate on a real build
+  // were the square, saw and comb tables, all of which are periodic by construction.
   let localMax = 0;
-  const window = Math.min(64, loopEnd - loopStart - 1);
-  for (let i = 0; i < window; i++) {
-    const a = data[loopEnd - 2 - i];
-    const b = data[loopEnd - 1 - i];
-    if (a === undefined || b === undefined) break;
-    const d = Math.abs(b - a);
+  for (let i = loopStart + 1; i < loopEnd; i++) {
+    const d = Math.abs(data[i]! - data[i - 1]!);
     if (d > localMax) localMax = d;
   }
-  // A wrap step no larger than the sample's own steepest local move is not a seam.
-  if (localMax === 0) return step;
+  // A perfectly flat loop (digital silence) with a step at the wrap is infinitely bad;
+  // with no step it is fine.
+  if (localMax === 0) return step === 0 ? 0 : Infinity;
   return step / localMax;
 }

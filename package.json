@@ -13,7 +13,9 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "build:bank": "tsx scripts/buildBank.ts",
+    "probe:sf2": "tsx scripts/probeSf2.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

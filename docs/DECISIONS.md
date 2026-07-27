@@ -251,3 +251,61 @@ answers change the extractor.
 **The SF2 is not vendored.** 141 MB for a file the app never loads (it loads the *built bank*).
 `scripts/bankConfig.ts` resolves it from `BORGM1_SF2`, then `assets/`, then a sibling project's
 copy — read-only.
+
+### Building the bank
+
+**One blob, not hundreds of files.** `bank.pcm` (all samples, Int16LE, concatenated) plus
+`bank.json` (keymap + per-sample offset/length/loop/root/tuning). The factory bank belongs in
+the Cache API, and one entry fetched once beats ~600 conditional requests. Result: **50 MiB,
+479 distinct samples, 594 key zones, 100/100 multisounds, 44/44 drums.**
+
+**Zones are inherited, not invented.** For each source preset the builder walks all 128 keys
+asking the SoundFont which sample would sound, and groups runs that answer the same. That
+reproduces FluidR3's own zone boundaries (typically 9 per instrument) instead of guessing them
+— and dense key zones are exactly where the absent 1988 size ceiling is worth spending, because
+keeping the pitch ratio near 1.0 matters more than interpolation quality.
+
+**GM program numbers, not FluidR3 internals.** Every entry in `data/sourceMap.ts` names a
+General MIDI program, so swapping in a better-sourced SF2 later is a config change.
+
+**`approx` is an upgrade shortlist, not an apology.** 39 multisounds and 12 drums are marked
+it: GM simply has no slot for `Lore`, `PanWave`, `FvWave`, `MvWave`, `Wire`, `Rhythm` — M1
+synthesised textures — or for one-shot percussion like `Pole`, `Drop`, `Pop`. Each maps to the
+nearest timbre and is flagged, so once the instrument is playable it is possible to hear which
+substitutions actually hurt and re-source only those. A test asserts the *core* instruments
+(pianos, organs, flute, choir, strings, trumpet) are NOT flagged, or the list would be noise.
+
+**The three kicks come from three different kits** (Standard / Room / TR-808), and the two
+hi-hat pairs from two. Sourcing `Kick1/2/3` from one kit three times would give three identical
+kicks where the M1 has three distinct ones. Pinned by test.
+
+**DWGS 77–99 are rendered additively, not sampled — and that is authentic.** DWGS was Korg's
+*Digital Waveform Generator System*: stored harmonic amplitude tables, summed. Doing the same
+here means the method is right even though the tables are ours. Three further benefits: the
+result is band-limited by construction (no partial above Nyquist is ever created, so there is
+nothing to alias), the loop is seamless by construction (the table IS exactly one period), and
+it runs in plain Node where there is no `OfflineAudioContext`.
+
+**256 samples at 32 kHz = 125 Hz = MIDI 47 + 21 cents.** An integer table length is what makes
+the loop exact; the odd root pitch is the price and is carried in the manifest. A test pins all
+three constants together, since moving one without the others detunes every synthesized sound.
+
+**Six DWGS tables are exact, seventeen are authored.** The geometric waves have closed-form
+Fourier definitions and are exactly right. Everything named `DWGS <instrument>` is an
+approximation of a timbre Korg never published — flagged `exact: false`, and a test requires
+each to carry a note explaining where its shape came from. **Label the guesses.**
+
+### The gate runs on the build, not only on fixtures
+
+`buildBank.ts` measures loop-seam continuity on **every looped sample it emits** and fails the
+build if any exceeds the limit. A unit test proves the algorithm is right on fixtures; this
+proves the actual output is right on the actual data. Currently **451/451 pass**.
+
+**The gate caught a bug in itself first.** The initial metric normalised the wrap step against
+the steepest step in the loop's last 64 samples, and failed the square, saw and comb tables —
+all of which are periodic by construction and therefore *cannot* click. A square wave is flat
+across most of its cycle and steps rail-to-rail once, so a tail-only window usually misses that
+edge, under-reads the waveform's natural step size by orders of magnitude, and calls an exact
+loop broken. Fixed by scanning the whole loop. The question the metric asks is "is the move at
+the wrap unusual **for this waveform**?", and that only works if the scale comes from the whole
+waveform.
