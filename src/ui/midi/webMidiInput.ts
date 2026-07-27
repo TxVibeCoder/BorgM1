@@ -1,0 +1,281 @@
+/**
+ * Thin Web MIDI input shell (feature: keyboard + MIDI). Two layers:
+ *
+ *  1. parseMidiMessage — PURE, exported, unit-tested in Node (NO MIDIAccess needed):
+ *     decodes a raw MIDI status+data triplet into noteOn / noteOff / clock+transport /
+ *     controlChange (the mod wheel is CC #1) / pitchBend (14-bit) / other. Channel defaults to
+ *     OMNI; an optional channelFilter accepts only one channel (system real-time always passes).
+ *     Active-sensing and unmapped CCs stay 'other'.
+ *
+ *  2. WebMidiInput — the THIN device shell (NOT unit-tested; the prompt + real-device
+ *     delivery + hot-plug require a hardware checkpoint). It feature-
+ *     detects navigator.requestMIDIAccess, requests access with the single permission
+ *     prompt, enumerates inputs, and routes note-on / note-off through the SAME callbacks
+ *     the on-screen keyboard uses (the bridge wires both to one MonoVoice). It DEGRADES
+ *     GRACEFULLY: when Web MIDI is unsupported (Node / jsdom / Firefox / Safari / a non-
+ *     secure context) or the prompt is denied, it RESOLVES a status — it never throws.
+ *
+ * Web MIDI types (MIDIAccess, MIDIInput, MIDIInputMap, MIDIMessageEvent,
+ * MIDIConnectionEvent, Navigator.requestMIDIAccess) ship in lib.dom.d.ts (TS 5.9.3), so
+ * this shell type-checks WITHOUT @types additions and WITHOUT a new npm dep. Three lib
+ * facts shape the implementation and are called out inline below.
+ */
+
+/** Decoded message kind + payload. note/velocity are 0 for non-note kinds. */
+export interface ParsedMidiMessage {
+  type: 'noteOn' | 'noteOff' | 'clock' | 'start' | 'continue' | 'stop' | 'controlChange' | 'pitchBend' | 'other';
+  note: number;
+  velocity: number;
+  /** controlChange only: CC controller number + 0..127 value. */
+  controller?: number;
+  value?: number;
+  /** pitchBend only: assembled 14-bit value 0..16383 (center 8192). */
+  bend14?: number;
+}
+
+/**
+ * PURE decode of a MIDI message. noUncheckedIndexedAccess is
+ * ON, so data[i] is number|undefined — we read into locals BEFORE indexing, never out of bounds.
+ *   System real-time (SINGLE-byte, status >= 0xF8) is decoded FIRST, before the length-3 guard:
+ *     0xF8 -> clock (24 PPQN), 0xFA -> start, 0xFB -> continue, 0xFC -> stop
+ *   0x90 with velocity > 0           -> noteOn { note, velocity }
+ *   0x80, OR 0x90 with velocity === 0 (running-status note-off-as-vel-0) -> noteOff
+ *   anything else (CC 0xB0, bend 0xE0, active-sensing 0xFE, short/garbage) -> other
+ *
+ * CHANNEL FILTER (G1): pass an optional `channelFilter` 0..15 to accept ONLY that channel; null /
+ * omitted = OMNI (accept every channel — the historical behavior). A CHANNEL-VOICE message
+ * (note/CC/bend, status 0x80..0xEF) on a NON-matching channel decodes to 'other'. SYSTEM REAL-TIME
+ * messages (status >= 0xF8: clock / start / continue / stop) carry NO channel nibble and ALWAYS
+ * pass regardless of the filter — never gate the MIDI clock (G2 sync depends on it). The
+ * channel nibble is `status & 0x0F`; the message kind is `status & 0xF0` (unchanged).
+ */
+export function parseMidiMessage(data: ArrayLike<number>, channelFilter: number | null = null): ParsedMidiMessage {
+  const status = data[0];
+  if (status === undefined) return { type: 'other', note: 0, velocity: 0 };
+  // System real-time messages are single-byte — handled before the length-3 guard AND before the
+  // channel filter: they carry no channel nibble, so the clock/transport stream is never gated.
+  if (status === 0xf8) return { type: 'clock', note: 0, velocity: 0 };
+  if (status === 0xfa) return { type: 'start', note: 0, velocity: 0 };
+  if (status === 0xfb) return { type: 'continue', note: 0, velocity: 0 };
+  if (status === 0xfc) return { type: 'stop', note: 0, velocity: 0 };
+  if (data.length < 3) return { type: 'other', note: 0, velocity: 0 };
+  // Channel filter (channel-voice messages only — status 0x80..0xEF carry the channel in the low
+  // nibble). System real-time already returned above; system-common (0xF0..0xF7) has no channel and
+  // falls through to 'other' regardless. A non-matching channel -> 'other' (silently ignored).
+  if (channelFilter !== null && status >= 0x80 && status <= 0xef && (status & 0x0f) !== channelFilter) {
+    return { type: 'other', note: 0, velocity: 0 };
+  }
+  const note = data[1];
+  const velocity = data[2];
+  if (note === undefined || velocity === undefined) {
+    return { type: 'other', note: 0, velocity: 0 };
+  }
+  const command = status & 0xf0;
+  if (command === 0x90 && velocity > 0) {
+    return { type: 'noteOn', note, velocity };
+  }
+  if (command === 0x80 || (command === 0x90 && velocity === 0)) {
+    return { type: 'noteOff', note, velocity: 0 };
+  }
+  // Control Change (0xB0): data[1]=controller, data[2]=value (the mod wheel is CC #1).
+  if (command === 0xb0) {
+    return { type: 'controlChange', note: 0, velocity: 0, controller: note, value: velocity };
+  }
+  // Pitch Bend (0xE0): 14-bit, data[1]=LSB, data[2]=MSB; center 8192.
+  if (command === 0xe0) {
+    return { type: 'pitchBend', note: 0, velocity: 0, bend14: note | (velocity << 7) };
+  }
+  return { type: 'other', note: 0, velocity: 0 };
+}
+
+/** Optional MIDI performance-wheel callbacks (pitch bend + mod wheel CC #1). */
+export interface MidiWheelHandlers {
+  /** raw 14-bit pitch-bend value 0..16383 (center 8192). */
+  onPitchBend?: (bend14: number) => void;
+  /** mod-wheel position normalised 0..1 (CC #1 value / 127). */
+  onModWheel?: (value01: number) => void;
+}
+
+/** Optional MIDI transport-clock callbacks (24-PPQN clock + Start/Continue/Stop). */
+export interface MidiClockHandlers {
+  onClock?: () => void;
+  onStart?: () => void;
+  onContinue?: () => void;
+  onStop?: () => void;
+}
+
+/** Runtime-only MIDI connection status (never persisted: the prompt needs a fresh gesture). */
+export type MidiStatus = {
+  state: 'unsupported' | 'disabled' | 'denied' | 'enabled';
+  deviceCount: number;
+  deviceNames: string[];
+};
+
+const DISABLED_STATUS: MidiStatus = { state: 'disabled', deviceCount: 0, deviceNames: [] };
+const UNSUPPORTED_STATUS: MidiStatus = { state: 'unsupported', deviceCount: 0, deviceNames: [] };
+
+type NoteOnHandler = (note: number, velocity: number) => void;
+type NoteOffHandler = (note: number) => void;
+
+export class WebMidiInput {
+  private access: MIDIAccess | null = null;
+  private statusValue: MidiStatus = DISABLED_STATUS;
+  private onNoteOn: NoteOnHandler | null = null;
+  private onNoteOff: NoteOffHandler | null = null;
+  /** Bridge panic callback fired when a hot-unplug drops the live device count to 0. */
+  private onAllNotesOff: (() => void) | null = null;
+  /** Optional transport-clock callbacks (24-PPQN clock + Start/Continue/Stop). */
+  private clock: MidiClockHandlers | null = null;
+  /** Optional performance-wheel callbacks (pitch bend + mod wheel CC #1). */
+  private wheels: MidiWheelHandlers | null = null;
+  /** Inputs we have attached onmidimessage to, so disable()/re-enumerate can detach cleanly. */
+  private attached: MIDIInput[] = [];
+  /** In-flight enable() (the permission prompt is async); concurrent calls share it. */
+  private pending: Promise<MidiStatus> | null = null;
+  /** Channel filter: null = OMNI (accept every channel); 0..15 = accept only that channel. System
+   *  real-time (clock/transport) ALWAYS passes — parseMidiMessage never gates it. */
+  private channelFilter: number | null = null;
+
+  /**
+   * Request access (one permission prompt) and start routing note events. Idempotent: a
+   * second call while already enabled returns the current status without re-prompting.
+   * Resolves (never rejects) with a status describing the outcome.
+   *
+   * @param onAllNotesOff optional panic callback fired on a hot-unplug-to-zero (the shared
+   *        mono voice means a stranded gate also blocks the sequencer — clear it).
+   */
+  async enable(
+    onNoteOn: NoteOnHandler,
+    onNoteOff: NoteOffHandler,
+    onAllNotesOff?: () => void,
+    clock?: MidiClockHandlers,
+    wheels?: MidiWheelHandlers,
+  ): Promise<MidiStatus> {
+    this.onNoteOn = onNoteOn;
+    this.onNoteOff = onNoteOff;
+    this.onAllNotesOff = onAllNotesOff ?? null;
+    this.clock = clock ?? null;
+    this.wheels = wheels ?? null;
+
+    // Idempotent: already enabled -> return current status, no second prompt.
+    if (this.access && this.statusValue.state === 'enabled') {
+      return this.statusValue;
+    }
+    // A prompt is already in flight (e.g. a rapid double-click on ENABLE MIDI): share it,
+    // so we never fire a second requestMIDIAccess() or race two MIDIAccess objects (which
+    // would orphan onmidimessage listeners on the losing access).
+    if (this.pending) return this.pending;
+
+    this.pending = this.requestAccess();
+    try {
+      return await this.pending;
+    } finally {
+      this.pending = null;
+    }
+  }
+
+  /** The actual request + wiring; serialized behind `pending` so it runs at most once at a time. */
+  private async requestAccess(): Promise<MidiStatus> {
+    // FEATURE DETECT (lint-clean): requestMIDIAccess is a NON-optional method in
+    // lib.dom.d.ts, so `=== undefined` would be flagged as always-false. Use typeof.
+    // At RUNTIME it is undefined in Node / jsdom / Firefox / Safari / non-secure context.
+    if (typeof navigator === 'undefined' || typeof navigator.requestMIDIAccess !== 'function') {
+      this.statusValue = UNSUPPORTED_STATUS;
+      return this.statusValue;
+    }
+
+    let access: MIDIAccess;
+    try {
+      access = await navigator.requestMIDIAccess({ sysex: false });
+    } catch {
+      // user rejected the prompt, or the browser refused access
+      this.statusValue = { state: 'denied', deviceCount: 0, deviceNames: [] };
+      return this.statusValue;
+    }
+
+    this.access = access;
+    access.onstatechange = (e) => this.handleStateChange(e);
+    this.reenumerate();
+    return this.statusValue;
+  }
+
+  /**
+   * MIDIAccess statechange. A hot-unplug of an INPUT can strand a note held on that very device —
+   * its note-off can never be delivered — even while OTHER inputs remain connected (deviceCount
+   * stays > 0, so the count===0 flush in reenumerate() never runs). Flush the shared mono voice on
+   * ANY input disconnect, then re-enumerate to re-attach the survivors and refresh the snapshot.
+   */
+  private handleStateChange(e: MIDIConnectionEvent): void {
+    const port = e.port;
+    if (port && port.state === 'disconnected' && port.type === 'input') this.onAllNotesOff?.();
+    this.reenumerate();
+  }
+
+  /** (Re)attach onmidimessage to every input and recompute the status snapshot. */
+  private reenumerate(): void {
+    const access = this.access;
+    if (!access) return;
+    this.detachInputs();
+    const names: string[] = [];
+    // MIDIInputMap types ONLY forEach() in this lib (no Symbol.iterator / .size / .values),
+    // so deviceCount + deviceNames are collected INSIDE forEach.
+    access.inputs.forEach((input) => {
+      input.onmidimessage = (e) => this.handleMessage(e);
+      this.attached.push(input);
+      names.push(input.name ?? input.id);
+    });
+    const deviceCount = this.attached.length;
+    this.statusValue = { state: 'enabled', deviceCount, deviceNames: names };
+    // Hot-unplug-to-zero: clear any hung gate on the shared mono voice.
+    if (deviceCount === 0) this.onAllNotesOff?.();
+  }
+
+  /**
+   * Set the channel filter: null = OMNI (accept all 16 channels); an integer 0..15 = accept ONLY
+   * that channel for channel-voice messages (notes/CC/bend). System real-time (clock/transport)
+   * always passes. A non-integer / out-of-range value falls back to OMNI (defensive). Takes effect
+   * on the NEXT message — no re-attach needed (the live onmidimessage closures read this field).
+   */
+  setChannelFilter(channel: number | null): void {
+    this.channelFilter =
+      channel !== null && Number.isInteger(channel) && channel >= 0 && channel <= 15 ? channel : null;
+  }
+
+  private handleMessage(e: MIDIMessageEvent): void {
+    // MIDIMessageEvent.data is Uint8Array<ArrayBuffer> | null in this lib — guard first.
+    if (!e.data) return;
+    const msg = parseMidiMessage(e.data, this.channelFilter);
+    if (msg.type === 'noteOn') this.onNoteOn?.(msg.note, msg.velocity);
+    else if (msg.type === 'noteOff') this.onNoteOff?.(msg.note);
+    else if (msg.type === 'clock') this.clock?.onClock?.();
+    else if (msg.type === 'start') this.clock?.onStart?.();
+    else if (msg.type === 'continue') this.clock?.onContinue?.();
+    else if (msg.type === 'stop') this.clock?.onStop?.();
+    else if (msg.type === 'pitchBend') this.wheels?.onPitchBend?.(msg.bend14 ?? 8192);
+    else if (msg.type === 'controlChange' && msg.controller === 1 && msg.value !== undefined) {
+      this.wheels?.onModWheel?.(msg.value / 127); // CC #1 = mod wheel
+    }
+    // other CC / active-sensing / garbage -> ignored
+  }
+
+  private detachInputs(): void {
+    for (const input of this.attached) input.onmidimessage = null;
+    this.attached = [];
+  }
+
+  /** Detach every handler so a later re-enable doesn't double-fire; status -> 'disabled'. */
+  disable(): void {
+    if (this.access) this.access.onstatechange = null;
+    this.detachInputs();
+    // Release any gate held on a device at teardown — once detached, that device's
+    // note-off can no longer be delivered, so flush before dropping access.
+    this.onAllNotesOff?.();
+    this.access = null;
+    this.statusValue = DISABLED_STATUS;
+  }
+
+  /** Current runtime status (initial 'disabled'). */
+  get status(): MidiStatus {
+    return this.statusValue;
+  }
+}
