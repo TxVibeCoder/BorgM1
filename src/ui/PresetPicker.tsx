@@ -1,33 +1,33 @@
 /**
- * Preset-picker overlay (PRESETS + SAVE). A modal rendered as
- * plain HTML (NOT SVG): it is window chrome and must live OUTSIDE the transform:
- * scale <main>, so it is screen-pixel sized rather than stage-scaled (App
- * mounts it as a sibling of the scaled stage). Opened from the utility strip's
- * two now-live caps; `mode` only decides the initial focus / emphasis:
+ * Setup browser / save overlay. A modal rendered as plain HTML (NOT SVG): it is window
+ * chrome and must live OUTSIDE the transform:scale <main>, so it is screen-pixel sized
+ * rather than stage-scaled (App mounts it as a sibling of the scaled stage). `mode` only
+ * decides the initial focus / emphasis:
  *
- *   'browse'  -> opened from PRESETS (focus the card so Esc has a target)
- *   'save'    -> opened from SAVE    (autofocus the name input)
+ *   'browse'  -> focus the card so Esc has a target
+ *   'save'    -> autofocus the name input
  *
- * The overlay talks ONLY to engineBridge (the single React→engine seam) plus the
- * static listFactoryPresets() read (imported directly from factoryPresets — it is
- * compile-time data, not a bridge round-trip). Three sections:
+ * Three sections:
+ *   A FACTORY     — curated entries; click loads one and closes.
+ *   B YOUR SETUPS — saved slots; click loads + closes; an inline two-step-confirm delete
+ *                   (NO window.confirm) removes a slot in place.
+ *   C SAVE/SHARE  — name a slot + SAVE; EXPORT a portable .json; IMPORT a .json.
  *
- *   A FACTORY     — the 4 curated recipes; click loads one and closes.
- *   B YOUR SETUPS — localStorage slots (engineBridge.listSlots()); click loads +
- *                   closes; an inline two-step-confirm delete (NO window.confirm,
- *                   mirroring the INIT double-click safety) removes a slot in place.
- *   C SAVE/SHARE  — name a slot + SAVE; EXPORT the portable .json; IMPORT a .json.
+ * DEPENDENCY-INJECTED. SynthStack's copy imported a singleton `engineBridge` and a static
+ * factory-preset list directly; both went with the gut, and hard-wiring a replacement would
+ * have meant stubbing seven methods of an engine that does not exist yet. It now takes a
+ * `SetupBridge` prop, which also makes it testable in plain Node with no DOM.
  *
- * Slots live in localStorage, NOT the store, so useSyncExternalStore would never
- * fire for them — we hold a local `slots` array and re-read listSlots() manually
- * after every save / delete / import. Loads route through the bridge (which drives
- * the store + engine), so the stage panels update reactively with no extra wiring;
- * we just close after a load. Status text ("Saved" / "Imported" / an error) renders
- * inline (no window.alert); importSetup resolves {ok,error?} so the UI never sees a
- * raw throw.
+ * Slots do not live in the state tree (they are storage, not sound), so no external-store
+ * subscription would ever fire for them — we hold a local `slots` array and re-read
+ * `listSlots()` manually after every save / delete / import. Loads route through the bridge,
+ * so the stage updates reactively with no extra wiring; we just close after a load. Status
+ * text renders inline (no window.alert); `importSetup` resolves {ok,error?} so the UI never
+ * sees a raw throw.
  *
- * The hidden-file-input idiom (input.value='' BEFORE click, or re-importing the
- * same file no-ops onChange) is copied verbatim from SamplerPanel.tsx.
+ * NOTE for Phase 6: this is NOT the factory-bank browser. That one is specified separately
+ * in UI-SPEC.md — two 4x4 tag grids with live faceting, horizontal card paging, APPLY
+ * without closing, blue accent. This overlay stays the *user setup* save/load surface.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -36,19 +36,38 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
 } from 'react';
-import { engineBridge } from './engineBridge';
-import { listFactoryPresets } from '../state/factoryPresets';
+
+/** One curated entry in the FACTORY section. */
+export interface FactoryEntry {
+  id: string;
+  name: string;
+  description: string;
+}
+
+/** Everything the overlay needs from the outside world. */
+export interface SetupBridge {
+  /** Names of the saved slots, newest-first is fine — rendered in the given order. */
+  listSlots: () => string[];
+  saveSlot: (name: string) => void;
+  deleteSlot: (name: string) => void;
+  loadSlot: (name: string) => Promise<void> | void;
+  loadFactory: (id: string) => Promise<void> | void;
+  /** Export the LIVE setup as a .json download. */
+  exportSetup: (name?: string) => Promise<void> | void;
+  /** Export a SAVED slot as a portable bundle. */
+  exportSlot: (name: string) => Promise<void> | void;
+  importSetup: (file: File) => Promise<{ ok: boolean; error?: string }>;
+}
 
 export interface PresetPickerProps {
   mode: 'browse' | 'save';
   onClose: () => void;
+  bridge: SetupBridge;
+  factory: FactoryEntry[];
 }
 
-/** Static factory list (compile-time data — no bridge round-trip). */
-const FACTORY = listFactoryPresets();
-
-export function PresetPicker({ mode, onClose }: PresetPickerProps) {
-  const [slots, setSlots] = useState<string[]>(() => engineBridge.listSlots());
+export function PresetPicker({ mode, onClose, bridge, factory }: PresetPickerProps) {
+  const [slots, setSlots] = useState<string[]>(() => bridge.listSlots());
   const [name, setName] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   /** Slot name currently armed for delete (first click arms, second confirms). */
@@ -58,10 +77,10 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
 
-  // Re-read the localStorage-backed slot list (no external-store subscription fires).
+  // Re-read the slot list (no external-store subscription fires for storage).
   const refreshSlots = useCallback(() => {
-    setSlots(engineBridge.listSlots());
-  }, []);
+    setSlots(bridge.listSlots());
+  }, [bridge]);
 
   // mode='save' -> autofocus the name input; mode='browse' -> focus the card so Esc
   // has a keyboard target. Runs once on mount.
@@ -74,34 +93,36 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
 
   const onLoadFactory = useCallback(
     (id: string) => {
-      void engineBridge.loadFactoryPreset(id);
+      void bridge.loadFactory(id);
       onClose();
     },
-    [onClose],
+    [bridge, onClose],
   );
 
   // ---- slots -----------------------------------------------------------------------------
 
   const onLoadSlot = useCallback(
     (slotName: string) => {
-      void engineBridge.loadSlot(slotName);
+      void bridge.loadSlot(slotName);
       onClose();
     },
-    [onClose],
+    [bridge, onClose],
   );
 
-  // Export a SAVED slot (not the live setup) as a portable .json bundle — embeds the slot's
-  // referenced user-sample bytes via the same export codec EXPORT uses. Fire-and-forget like the
-  // other bridge actions; the bridge is no-throw on an absent/corrupt slot.
-  const onBundleSlot = useCallback((slotName: string) => {
-    void engineBridge.exportSlot(slotName);
-    setStatus(`Bundled "${slotName}"`);
-  }, []);
+  // Export a SAVED slot (not the live setup) as a portable .json bundle. Fire-and-forget
+  // like the other bridge actions; the bridge is no-throw on an absent/corrupt slot.
+  const onBundleSlot = useCallback(
+    (slotName: string) => {
+      void bridge.exportSlot(slotName);
+      setStatus(`Bundled "${slotName}"`);
+    },
+    [bridge],
+  );
 
   const onDeleteSlot = useCallback(
     (slotName: string) => {
       if (confirmDelete === slotName) {
-        engineBridge.deleteSlot(slotName);
+        bridge.deleteSlot(slotName);
         setConfirmDelete(null);
         setStatus(null);
         refreshSlots();
@@ -110,7 +131,7 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
         setConfirmDelete(slotName);
       }
     },
-    [confirmDelete, refreshSlots],
+    [bridge, confirmDelete, refreshSlots],
   );
 
   // ---- save / export / import ------------------------------------------------------------
@@ -118,15 +139,15 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
   const onSave = useCallback(() => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    engineBridge.saveSlot(trimmed);
+    bridge.saveSlot(trimmed);
     refreshSlots();
     setStatus(`Saved "${trimmed}"`);
-  }, [name, refreshSlots]);
+  }, [bridge, name, refreshSlots]);
 
   const onExport = useCallback(() => {
-    void engineBridge.exportSetup(name.trim() || undefined);
+    void bridge.exportSetup(name.trim() || undefined);
     setStatus('Exported');
-  }, [name]);
+  }, [bridge, name]);
 
   const onImportClick = useCallback(() => {
     const input = fileInputRef.current;
@@ -139,7 +160,7 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
     (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      void engineBridge.importSetup(file).then((r) => {
+      void bridge.importSetup(file).then((r) => {
         if (r.ok) {
           setStatus('Imported');
           refreshSlots();
@@ -148,7 +169,7 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
         }
       });
     },
-    [refreshSlots],
+    [bridge, refreshSlots],
   );
 
   // ---- overlay chrome --------------------------------------------------------------------
@@ -177,12 +198,7 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
       onClick={onClose}
       onKeyDown={onOverlayKeyDown}
     >
-      <div
-        ref={cardRef}
-        className="preset-card"
-        tabIndex={-1}
-        onClick={onCardClick}
-      >
+      <div ref={cardRef} className="preset-card" tabIndex={-1} onClick={onCardClick}>
         <div className="preset-card-head">
           <h2 className="preset-title">PRESETS</h2>
           <button
@@ -200,7 +216,7 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
         <section className="preset-section">
           <h3 className="preset-section-title">FACTORY</h3>
           <ul className="preset-list">
-            {FACTORY.map((p) => (
+            {factory.map((p) => (
               <li key={p.id} className="preset-row">
                 <button
                   type="button"
@@ -301,7 +317,7 @@ export function PresetPicker({ mode, onClose }: PresetPickerProps) {
               IMPORT
             </button>
           </div>
-          {/* hidden file input (SamplerPanel idiom — value='' set before click) */}
+          {/* hidden file input — value='' set before click, or re-importing the same file no-ops */}
           <input
             ref={fileInputRef}
             type="file"

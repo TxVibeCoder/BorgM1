@@ -1,11 +1,16 @@
 /**
- * Sample byte store (feature: sampler pads, D10). Decoded AudioBuffers are NOT
- * serializable, so the state tree carries only a sampleId reference; the raw bytes
- * live here, keyed by that id. Two backends share one interface:
- *   - IndexedDbBackend: the browser store (DB 'synthstack', object store 'samples').
+ * USER sample byte store. Decoded AudioBuffers are NOT serializable, so the state
+ * tree carries only a sampleId reference; the raw bytes live here, keyed by that id.
+ * Two backends share one interface:
+ *   - IndexedDbBackend: the browser store (DB 'borgm1', object store 'samples').
  *   - MemoryBackend: a Map fallback for non-browser / test contexts (no real IDB).
  * Both enforce the same per-sample size cap and id-generation rules so the engine
  * and unit tests behave identically.
+ *
+ * SCOPE: user samples ONLY. The factory multisound bank belongs in the Cache API —
+ * IndexedDB deserializes on retrieval, which makes it the worst possible home for
+ * hundreds of megabytes of Int16 PCM. Phase 1 builds that separately; do not widen
+ * this store to hold it.
  */
 
 export interface SampleRecord {
@@ -32,8 +37,14 @@ export class SampleTooLargeError extends Error {
   }
 }
 
-/** Per-sample byte cap (~4 MB) — keeps IndexedDB usage and decode latency sane. */
-export const MAX_SAMPLE_BYTES = 4 * 1024 * 1024; // 4194304
+/**
+ * Per-sample byte cap. SynthStack's 4 MiB was sized for one-shot drum pads; an M1
+ * multisample source is a different animal — a stereo 24-bit 48 kHz minute is ~17 MiB
+ * before anything is trimmed, and a user importing their own multisound will hit 4 MiB
+ * on the first file. 64 MiB is deliberately generous: this is a PC-only app, the cap
+ * exists to catch a mis-drag (a video file, a whole SF2), not to ration space.
+ */
+export const MAX_SAMPLE_BYTES = 64 * 1024 * 1024; // 67108864
 
 /** Guard called by every put() BEFORE writing; throws SampleTooLargeError if over cap. */
 export function assertSampleSize(byteLength: number): void {
@@ -47,7 +58,7 @@ export function newSampleId(): string {
   return `samp-${Date.now()}-${idCounter++}`;
 }
 
-const DB_NAME = 'synthstack';
+const DB_NAME = 'borgm1';
 const STORE_NAME = 'samples';
 
 /** IndexedDB-backed store (browser). Lazy-opens the DB on first use. */

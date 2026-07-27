@@ -8,19 +8,16 @@
  * trade-dress copies. Plain-text functional titles in our own typography only.
  */
 
-/** Cable palette + cable budget come from the engine — re-exported, not duplicated. */
-export { CABLE_COLORS, CABLE_COUNT } from '../engine/studio';
-
 export const COLORS = {
   /** Page background (darker than panels so the rack reads as raised). */
   bg: '#101012',
   /** Panel face. */
   panel: '#1b1b1d',
-  /** Raised panel areas (sequencer wells, mixer strip). */
+  /** Raised panel areas (display well, timbre strip). */
   panelRaised: '#232326',
   /** Section outlines, panel border strokes. */
   panelEdge: '#2e2e33',
-  /** Drop shadows / jack holes / recesses. */
+  /** Drop shadows and recesses. */
   panelShadow: '#0a0a0b',
   /** Primary legend (labels, titles, section names). */
   legend: '#e8e0cf',
@@ -43,12 +40,10 @@ export const COLORS = {
   ledGreen: '#43b05c',
   /** Unlit LED lens. */
   ledOff: '#473530',
-  /** Jack ferrule / hex nut metal. */
-  jackRing: '#9aa0a6',
-  /** Jack ring shading. */
-  jackRingDark: '#5f6469',
-  /** Jack bore. */
-  jackHole: '#0a0a0b',
+  /** Bright hardware metal — switch bats, screw heads, bezels. */
+  metal: '#9aa0a6',
+  /** Shaded side of the same metal. */
+  metalDark: '#5f6469',
   /** focus-visible outline + drag value readout accent. Intentionally an ALIAS of ledAmber
    *  (#f0a030); kept distinct from the gold active-tab fill (#c89b3c) so the focus ring reads. */
   focus: '#f0a030',
@@ -62,36 +57,27 @@ export const FONT_CONDENSED =
   "'Arial Narrow', 'Roboto Condensed', 'Helvetica Neue', 'Segoe UI', Arial, sans-serif";
 
 /**
- * Per-machine IDENTITY colors — the canonical color-coding system. Originally the patchbay
- * group-border outline that unifies each machine's controls with its jack-field zone, these
- * are now ALSO applied to: each voice panel's title + face border + knob skirts
- * ({Cascade,Anvil,Monarch}Panel), the jack-field zone labels (JackFieldPanel), and the voice
- * tabs (TabBar + styles.css .tab-bar__tab--{id}). Blue=Monarch by design; Yellow=Cascade /
- * Green=Anvil follow the layout listing order; the mixer's violet is the 4th color.
- * NOTE: anvil green (#4caf5f) is intentionally distinct from ledGreen (#43b05c) — a machine
- * accent, not the run LED. Change a color here and every coded surface follows.
+ * MODE accent colors — hue as a mode signal, the one piece of the reference plugin's
+ * language worth copying outright (UI-SPEC §10): lime = editing, blue = browsing.
+ * Green marks the selected timbre row in a Combination. Change a color here and every
+ * coded surface follows.
  */
-export const GROUP_BORDER = {
-  cascade: '#e0c341', // yellow
-  anvil: '#4caf5f', // green
-  monarch: '#4f8fd9', // blue
-  mixer: '#9d6fd6', // violet (4th color)
-  courier: '#d97a3c', // burnt orange (5th color — the densest voice)
+export const ACCENT = {
+  /** Edit mode — panel highlights, active parameter, the lit tab. */
+  edit: '#a8c832',
+  /** Browse mode — the program/combi browser modal and everything inside it. */
+  browse: '#4f8fd9',
+  /** The selected timbre row's edge bar in the 8-row Combination strip. */
+  selected: '#43b05c',
 } as const;
 
-/** Group-border stroke width (intentionally "thick"). */
-export const GROUP_BORDER_WIDTH = 4.5;
+/** Section-border stroke width (intentionally "thick"). */
+export const SECTION_BORDER_WIDTH = 4.5;
 /** Borders inset this far from the region seams so adjacent strokes never touch. */
-export const GROUP_BORDER_INSET = 3.5;
+export const SECTION_BORDER_INSET = 3.5;
 
-/** Knob radii in panel viewBox units (s = trimmer-size, m = standard, l = hero FREQ/CUTOFF). */
+/** Knob radii in panel viewBox units (s = trimmer-size, m = standard, l = hero CUTOFF). */
 export const KNOB_RADIUS = { s: 13, m: 17, l: 22 } as const;
-
-/**
- * Jack radii in panel viewBox units. `ring` = visible metal, `hole` = bore,
- * `hit` = invisible pointer target (must carry data-jack-id — see types.ts JackProps).
- */
-export const JACK_RADIUS = { ring: 13, hole: 5.5, hit: 16 } as const;
 
 /** Knob rotation sweep: 270°, -135° (min value) to +135° (max value), 0° = straight up. */
 export const KNOB_SWEEP_DEG = { start: -135, end: 135 } as const;

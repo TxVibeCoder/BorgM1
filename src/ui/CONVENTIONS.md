@@ -1,34 +1,33 @@
-# UI conventions — stage 1 contracts (design-agent owned)
+# UI conventions (design-agent owned)
 
 Source of truth: `theme.ts` (constants) + `types.ts` (prop/layout contracts) + `styles.css`
-(global CSS; its `:root` vars mirror `theme.ts` — change both or neither, via the design
-agent). Since the 16:9 redesign, all panel coordinates are SVG viewBox units that map 1:1
-to stage px — every panel's viewBox equals its stage region (`stage16x9.ts` REGIONS; the
-stage itself is 1805.19×1015.42, uniformly scaled to the window by App.tsx).
+(global CSS; its `:root` vars mirror `theme.ts` — change both or neither). All panel
+coordinates are SVG viewBox units that map 1:1 to stage px — every panel's viewBox equals
+its stage region (`stage.ts`; the stage itself is a 1400×800 **7:4** design box, uniformly
+scaled to the window by `App.tsx`).
 
-## Data flow (work order §14.8 — non-negotiable)
+## Data flow — non-negotiable
 
-- The engine is a singleton OUTSIDE React (`src/engine/studio.ts`); React reads a store and
-  calls imperative setters.
-- Knob drag: `onInput(v)` → immediate imperative engine write via the bridge
-  (`module.setControl(...)`-level). **No store write, no React state outside the knob.**
-  Only the dragged control re-renders (its value is local state while dragging).
-- Release / double-click reset: `onCommit(v)` → one `store.setControl` write. Anything that
-  must mirror the store mid-drag is debounced ≥ 100 ms.
-- `useControl(moduleId, controlId)`: subscribes to the store, selects that one control's
-  value, bails out (`Object.is`) when unchanged → a store write re-renders only the control
-  it changed. Never subscribe a panel component to the whole store.
-- Step LED chasing comes from the scheduler's uiQueue via rAF (§9.1), never store writes.
+- The engine is a singleton OUTSIDE React; React reads a store and calls imperative setters.
+- Knob drag: `onInput(v)` → immediate imperative engine write via the bridge.
+  **No store write, no React state outside the knob.** Only the dragged control re-renders
+  (its value is local state while dragging).
+- Release / double-click reset: `onCommit(v)` → one store write. Anything that must mirror
+  the store mid-drag is debounced ≥ 100 ms.
+- A `useControl(controlId)` hook subscribes to the store, selects that one control's value,
+  and bails out (`Object.is`) when unchanged → a store write re-renders only the control it
+  changed. Never subscribe a panel component to the whole store.
+- Engine-driven UI motion (EG traces, step chasing) comes from the scheduler's uiQueue via
+  rAF, never store writes.
 
-## Knob ergonomics (Appendix D Tier 3: webaudio-controls behavior, our visuals)
+## Knob ergonomics
 
-- Vertical **relative** drag with pointer capture; up = increase; 150 px travel = full
-  min→max sweep (`DRAG_FULL_SWEEP_PX`).
+- Vertical **relative** drag with pointer capture; up = increase; `DRAG_FULL_SWEEP_PX` of
+  travel = full min→max sweep.
 - Shift = ×0.1 fine (`FINE_DRAG_FACTOR`); re-baseline when Shift toggles mid-drag (no jumps).
 - Double-click = reset to `ControlDef.default` (fires `onInput` then `onCommit`).
-- Drag maps linearly across `[min, max]`; `exp` taper is the engine adapter's job
-  (`src/engine/units.ts`), not the UI's. Detents come only from `taper: "stepped"` /
-  a `steps` count; `type: "stepKnob"` (sequencer step rows) is continuous.
+- Drag maps linearly across `[min, max]`; an `exp` taper is the engine adapter's job, not the
+  UI's. Detents come only from `taper: "stepped"` / a `steps` count.
 - Rotation: 270° sweep, −135° (min) → +135° (max), 0° up (`KNOB_SWEEP_DEG`).
 - Value readout (value + `ControlDef.unit`, ≤ 4 significant digits) visible while dragging,
   hidden on release.
@@ -39,19 +38,10 @@ stage itself is 1805.19×1015.42, uniformly scaled to the window by App.tsx).
 - Switch: 2-position click toggles; ≥ 3 positions click cycles forward, Shift-click backward.
   Positions come from `ControlDef.positions`; lever/indicator drawn at the active one.
 - Button (latching): click cycles positions; `lit` drives its LED lamp.
-- Button (`momentary: true`, e.g. HOLD): `onChange(active)` on pointerdown, `onChange(idle)`
-  on pointerup/pointercancel (active/idle = last/first of `positions`).
+- Button (`momentary: true`): `onChange(active)` on pointerdown, `onChange(idle)` on
+  pointerup/pointercancel (active/idle = last/first of `positions`).
 - Discrete changes: engine write + store commit together in `onChange` (no debounce).
 - All focusable; Space/Enter activates.
-
-## Jacks (stage 1: static sockets — cables are stage 2)
-
-- Hit area: invisible circle `r = JACK_RADIUS.hit` carrying `data-jack-id={def.id}`.
-  REQUIRED — the stage-2 CableLayer hit-tests jacks through that attribute.
-- Tooltip (cheap hover, e.g. SVG `<title>`): `panelLabel · IN|OUT · signal`, plus
-  `normalled from X` when `JackDef.normalledTo` is set — X is the source jack's panelLabel,
-  or `<name> (internal)` for `INTERNAL:<name>` refs.
-- Normalled-but-unpatched inputs get a subtle ring (§8.2) so users can learn the normals.
 
 ## Sections & legends
 
@@ -59,22 +49,26 @@ stage itself is 1805.19×1015.42, uniformly scaled to the window by App.tsx).
   ~13 units, letter-spacing ~1.5, `legend` fill, sitting in a gap in the top border.
 - Control labels: condensed uppercase ~11 units, `legend` (use `legendDim` for units/ticks);
   above the control by default, below when `labelBelow: true`.
-- Panel title: plain text (`ModuleDef.displayName`), condensed uppercase, top-left.
+- Panel title: plain text, condensed uppercase, top-left.
 
-## File ownership (this stage)
+## BorgM1-specific rules
 
-| Files | Owner |
-|---|---|
-| `src/ui/theme.ts`, `types.ts`, `styles.css`, `CONVENTIONS.md` | design agent — FROZEN for others |
-| `src/ui/controls/*` (Knob, Switch, Button, Jack, StepLed) | controls agent |
-| `src/ui/panels/*` (per-module `PanelLayout` + panel components) | panels agent |
-| `src/ui/hooks/*` (useControl, engine bridge), `App.tsx`, rack shell, mixer column | integration agent |
-| `src/ui/cables/*` | cables agent (stage 2) |
-| `src/engine/*`, `src/state/*`, `data/*`, configs | FROZEN for all UI agents |
+- **The `1`/`2` rule.** Every per-oscillator control appears twice. Build **one**
+  per-oscillator component and instantiate it twice against the two halves of the parameter
+  model, driving both from a single `enabled` flag off `OSC MODE`. The `2` copy greys out in
+  SINGLE mode. This halves the panel work and makes the halves structurally unable to drift.
+- **Two EG graph components, not one.** The filter EG trace steps down to a release *level*;
+  the amp EG trace falls to zero because there is no release level. That asymmetry is engine
+  behaviour showing through, not a drawing detail.
+- **Disabled is a first-class visual**, designed rather than bolted on — roughly a third of
+  the centre column greys in SINGLE mode.
+- **Hue signals mode** (`theme.ts` ACCENT): lime edits, blue browses, green marks the
+  selected timbre row. Do not mix them.
+- **Say `FILTER` and `AMP` in the UI.** `VDF`/`VDA` are the manufacturer's nomenclature; keep
+  them internally where they match the SysEx model, never on a label.
 
-## §12.3 — no trade dress
+## No trade dress
 
 Dark panels, cream legends, gold-ish knobs *in the spirit of* the hardware — original work.
-NO SynthStack logos, wordmarks, lookalike badges, or copied silkscreen artwork. Module titles are
-plain-text functional names in our own typography. Cable colors come from the engine's
-`CABLE_COLORS` (re-exported by `theme.ts`).
+NO manufacturer logos, wordmarks, lookalike badges, or copied silkscreen artwork. Titles are
+plain-text functional names in our own typography.

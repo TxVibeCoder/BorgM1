@@ -1,17 +1,17 @@
 /**
- * Keybed geometry + note mapping (feature: keyboard + MIDI) — PURE, Web-Audio-free and
- * React-free, Node-testable. Shared by the bridge tests AND the on-screen KeyboardPanel
- * so the white/black layout and the semitone -> MIDI-note mapping are defined ONCE and
- * never duplicated.
+ * Keybed geometry + note mapping — PURE, Web-Audio-free and React-free, Node-testable.
+ * Shared by the engine bridge AND the on-screen keyboard so the white/black layout and
+ * the semitone -> MIDI-note mapping are defined ONCE and never duplicated.
  *
  * The on-screen keybed is 2 octaves + a top C = 25 keys. Semitone 0 (the low C) maps to
  * MIDI note 48 (C3) at octaveShift 0, so MIDI note 60 (middle C) sits at semitone 12 —
  * inside the bed at the unshifted octave.
  *
- * DOUBLE-SHIFT RESOLUTION (design-locked): octave lives in EXACTLY ONE place — the
- * BRIDGE, applied on the vv after (note-60)/12. The panel ALWAYS calls keyToNote(semitone,
- * 0) (octave-free raw note 48+semitone); keyToNote keeps its octaveShift parameter purely
- * for unit tests (semitone 12 @ shift 0 -> 60; +1 shift -> +12).
+ * DOUBLE-SHIFT RESOLUTION (design-locked): the octave transpose lives in EXACTLY ONE
+ * place — the bridge. The panel ALWAYS calls keyToNote(semitone, 0) and gets an
+ * octave-free raw note; keyToNote keeps its octaveShift parameter purely for unit tests
+ * (semitone 12 @ shift 0 -> 60; +1 shift -> +12). Applying it in both places is how an
+ * on-screen keyboard ends up two octaves off its own MIDI input.
  */
 
 /** Total keys in the on-screen bed: 2 octaves + the top C. */
@@ -40,8 +40,8 @@ export const KEYBED_SHAPE: KeyShape[] = Array.from({ length: KEYBED_KEYS }, (_, 
 /**
  * Map a key's semitone offset (0..24) + an octave shift to a raw MIDI note number:
  *   48 + 12·octaveShift + semitoneOffset
- * The panel passes octaveShift = 0 (octave-free); the bridge adds keyboardOctave on the
- * vv side. The octaveShift parameter is retained for unit tests.
+ * The panel passes octaveShift = 0 (octave-free); the bridge adds the keyboard octave.
+ * The octaveShift parameter is retained for unit tests.
  */
 export function keyToNote(semitoneOffset: number, octaveShift: number): number {
   return KEYBED_LOW_C_NOTE_AT_OCTAVE0 + 12 * octaveShift + semitoneOffset;

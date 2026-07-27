@@ -45,10 +45,10 @@ describe('recordHelpers — pure recording core (feature: recording)', () => {
 
   it('buildRecordingFilename injects the timestamp verbatim', () => {
     expect(buildRecordingFilename('2026-06-15T14-03-22-000Z', 'webm')).toBe(
-      'synthstack-2026-06-15T14-03-22-000Z.webm',
+      'borgm1-2026-06-15T14-03-22-000Z.webm',
     );
     expect(buildRecordingFilename('2026-06-15T14-03-22-000Z', 'ogg')).toBe(
-      'synthstack-2026-06-15T14-03-22-000Z.ogg',
+      'borgm1-2026-06-15T14-03-22-000Z.ogg',
     );
   });
 

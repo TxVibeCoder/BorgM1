@@ -1,22 +1,21 @@
 /**
- * Sampler launch grid (feature: loop-quantize) — pure boundary math, Web-Audio-free.
- * Distinct from quantize.ts (the Cascade PITCH quantizer): this snaps a manual
- * pad launch / loop re-launch to the Monarch master's bar/beat grid. QUANTIZE picks the
- * division; the Monarch supplies the phase via PhaseRef (anchor = the un-swung bar
- * downbeat, derived in monarchseq.phaseRef()).
+ * Tempo grid — pure boundary math, Web-Audio-free.
  *
- * Semantics: division OFF or no running master => launches are
- * immediate (nextBoundary returns afterTime); only UI taps + loop re-launch/stop read
- * this grid, never the external TRIG_IN edge path.
+ * Snaps an event to a bar/beat grid: QUANTIZE picks the division and a `PhaseRef`
+ * supplies the phase (anchor = the un-swung bar downbeat). Inherited verbatim from
+ * SynthStack, where it drove sampler loop launch; here it is the grid the Phase 7
+ * sequencer's quantize and the Combination metronome build on.
+ *
+ * Semantics: division OFF or no running clock => events fire immediately
+ * (`nextBoundary` returns `afterTime` unchanged).
  */
 
 export type QuantDivision = 'OFF' | '1/16' | '1/8' | '1/4' | '1/2' | '1 BAR';
 
-/** Selector positions in order — byte-identical to SAMP_QUANTIZE.positions (sampler.json)
- *  and QUANTIZE_DIVISIONS (studioState.ts); pinned lockstep by the state round-trip test. */
+/** Selector positions, in order. */
 export const QUANT_CYCLE: QuantDivision[] = ['OFF', '1/16', '1/8', '1/4', '1/2', '1 BAR'];
 
-/** A snapshot of the Monarch master's grid phase at a moment in audio-clock time. */
+/** A snapshot of the master clock's grid phase at a moment in audio-clock time. */
 export interface PhaseRef {
   running: boolean;
   tempoBpm: number;
@@ -26,8 +25,19 @@ export interface PhaseRef {
   sixteenthDurS: number;
 }
 
-/** A loop re-launches once per bar; the bar is 16 sixteenths (4/4 — locked scope). */
+/** A bar is 16 sixteenths (4/4 — locked scope). */
 export const RELAUNCH_SIXTEENTHS = 16;
+
+/** Tempo (BPM) -> 16th-note step duration in seconds. */
+export function stepDurS(bpm: number): number {
+  return 60 / Math.min(300, Math.max(20, bpm)) / 4;
+}
+
+/** Swing offset applied to ODD 16th ticks: (swing−50)/50 × 0.5 × stepDur.
+ *  Gate placement only — the grid itself never inherits it (see nextBoundary). */
+export function swingOffsetS(swingPct: number, stepDurSeconds: number): number {
+  return ((Math.min(100, Math.max(0, swingPct)) - 50) / 50) * 0.5 * stepDurSeconds;
+}
 
 /** Division -> its length in 16th notes (OFF -> 0, i.e. no grid). */
 export function divisionSixteenths(d: QuantDivision): number {
@@ -47,13 +57,13 @@ export function divisionSixteenths(d: QuantDivision): number {
   }
 }
 
-/** Seconds per bar at the phase's tempo (the loop re-launch period). */
+/** Seconds per bar at the phase's tempo. */
 export function barPeriodS(phase: PhaseRef): number {
   return RELAUNCH_SIXTEENTHS * phase.sixteenthDurS;
 }
 
 /**
- * The first grid boundary strictly at or after `afterTime`. OFF or a stopped master
+ * The first grid boundary strictly at or after `afterTime`. OFF or a stopped clock
  * degrades to immediate (returns `afterTime` unchanged). Otherwise the boundary is a
  * multiply from the bar anchor — anchor + k·gridS, k = ceil((afterTime − anchor)/gridS)
  * — so every sub-bar boundary stays phase-coherent with the bar downbeat and the

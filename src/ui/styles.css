@@ -1,5 +1,5 @@
 /*
- * synthstack global stylesheet — the ONLY global CSS file.
+ * BorgM1 global stylesheet — the ONLY global CSS file.
  * :root custom properties mirror src/ui/theme.ts; change both together or neither
  * (design-agent owned — see src/ui/CONVENTIONS.md).
  */
@@ -21,37 +21,26 @@
   --color-led-amber: #f0a030;
   --color-led-green: #43b05c;
   --color-led-off: #473530;
-  --color-jack-ring: #9aa0a6;
-  --color-jack-ring-dark: #5f6469;
-  --color-jack-hole: #0a0a0b;
   --color-focus: #f0a030;
-  /* group borders (16:9 redesign — theme.ts GROUP_BORDER) */
-  --color-group-cascade: #e0c341;
-  --color-group-anvil: #4caf5f;
-  --color-group-monarch: #4f8fd9;
-  --color-group-mixer: #9d6fd6;
-  --color-group-courier: #d97a3c;
+  /* Mode accents — theme.ts ACCENT. Hue is a mode signal: lime edits, blue browses. */
+  --color-accent-edit: #a8c832;
+  --color-accent-browse: #4f8fd9;
+  --color-accent-selected: #43b05c;
   --font-stack: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
   --font-condensed: 'Arial Narrow', 'Roboto Condensed', 'Helvetica Neue', 'Segoe UI', Arial,
     sans-serif;
-  /* Out-of-stage chrome heights (Wave 1 tab/ribbon refactor). MUST stay in lockstep with
-   * src/ui/App.tsx RIBBON_H / TABBAR_H / CHROME_H — App subtracts CHROME_H from the
-   * window height before scaling the stage, and these vars size + offset the chrome. */
-  --ribbon-h: 98px;
-  --tabbar-h: 34px;
-  --chrome-h: calc(var(--ribbon-h) + var(--tabbar-h)); /* 98 + 34 = 132px */
+  /* Out-of-stage chrome height. MUST stay in lockstep with src/ui/App.tsx CHROME_H —
+   * App subtracts CHROME_H from the window height before scaling the stage. */
+  --chrome-h: 0px;
 }
 
 html,
 body {
   margin: 0;
   padding: 0;
-  /* Mobile/iOS-only hygiene — ignored by desktop renderers (byte-identical on 1080p Chrome).
-   * Stabilizes text size under the .stage scale transform and removes the grey iOS tap
-   * flash on every knob/jack grab. Does NOT affect :focus-visible (keyboard a11y stays). */
+  /* Stabilizes text size under the .stage scale transform. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -62,181 +51,27 @@ body {
 }
 
 /*
- * Per-tab fill-zoom viewport. The stage is the always-1805.19-wide <main>, but each tab
- * scales+translates to FILL the window with that tab's content bbox (App.tsx). The
- * .stage-sizer (overflow:hidden, sized to box.w*scale × box.h*scale) is the per-tab
- * window; this wrapper is fixed and centers that sizer horizontally. computeScale fits
- * each bbox beneath the chrome, so there is normally NO vertical scroll — overflow-y:auto
- * is retained only as a fallback (and so the mobile pinch-zoom panning model still works).
+ * The stage viewport. The stage is a fixed 7:4 design box (src/ui/stage.ts) that
+ * App.tsx scales uniformly to fill the window beneath the chrome band. Everything
+ * inside is authored in design px and never does its own scaling.
  */
 .stage-viewport {
   position: fixed;
-  /* Out-of-stage chrome (master ribbon + tab bar) occupies the top --chrome-h band; the
-   * viewport starts BELOW it and fills the rest of the window. App.tsx subtracts the same
-   * CHROME_H from computeScale so the scaled bbox fits this reduced height. */
   inset: var(--chrome-h) 0 0 0;
   display: flex;
-  align-items: flex-start; /* top-align the per-tab sizer */
+  align-items: center;
   justify-content: center;
-  overflow-y: auto; /* fallback only — per-tab fill-zoom normally fits; mobile pinch-pan keeps it */
-  overflow-x: hidden;
-  /* Reserve the scrollbar gutter on BOTH sides so the horizontally-centered console
-   * stays put whether or not the vertical scrollbar is showing (pixel-stable 16:9). The
-   * MIN_SCALE floor (App.tsx) can make a short window's tab taller than the viewport, so
-   * a vertical scrollbar appears there — the gutter keeps the console from shifting. */
-  scrollbar-gutter: stable both-edges;
-  /* Suppress the browser pull-to-refresh / rubber-band overscroll on the scroller. */
-  overscroll-behavior: contain;
-  background: var(--color-bg);
-}
-
-/*
- * Per-tab content WINDOW. App.tsx sizes it inline to the ACTIVE tab's content bbox at
- * scale (box.w*scale × box.h*scale) and sets overflow:hidden, so it clips the always-
- * STAGE.w-wide scaled <main> down to just that bbox (transform:scale never contributes
- * to layout height, hence the explicit box). overflow:hidden is duplicated here as a
- * safety net; the .stage-viewport flex centers this sizer horizontally.
- */
-.stage-sizer {
-  flex: none;
   overflow: hidden;
+  background: var(--color-bg);
 }
 
 .stage {
-  position: relative; /* regions + the CableLayer/GroupBorders overlays anchor here */
+  position: relative; /* regions anchor here */
   flex: none;
-  width: 1805.19px; /* always STAGE.w — every tab's bbox is STAGE.w wide (CableLayer anchor) */
-  /* height set inline by App.tsx = the active tab's bbox BOTTOM (box.y+box.h): studio
-   * 1015.42, patchbay 1335.42, sampler 1635.42 — so every region/jack that mounts on the
-   * tab is inside <main>'s box and measurable. transform-origin top-left anchors the
-   * translate(-box.x*s,-box.y*s) scale(s) that maps the bbox top-left to the sizer origin. */
-  transform-origin: top left;
+  transform-origin: center center;
 }
 
-/*
- * OUT-OF-STAGE CHROME (Wave 1 tab/ribbon refactor) — the master ribbon + tab bar are
- * fixed, full-width, screen-pixel-sized bars pinned to the TOP of the window, ABOVE the
- * .stage-viewport (which starts at --chrome-h). They are NOT inside the transform:scale
- * <main>, so they never inherit the stage scale and never touch the stage16x9 geometry.
- * z-index sits above the stage overlays but below the preset overlay (50) so that modal
- * still wins.
- */
-.master-ribbon {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--ribbon-h);
-  z-index: 30;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  padding: 4px 8px;
-  background: var(--color-bg);
-  border-bottom: 1px solid var(--color-panel-edge);
-}
-
-/* The ribbon's SVG fills the bar width and scales its 1805.19 × 90 viewBox to the
- * screen-pixel height (preserveAspectRatio="xMidYMid meet" on the element keeps the
- * controls' aspect; the bar is wide enough on desktop that height is the binding edge). */
-.master-ribbon__svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.tab-bar {
-  position: fixed;
-  top: var(--ribbon-h);
-  left: 0;
-  right: 0;
-  height: var(--tabbar-h);
-  z-index: 30;
-  box-sizing: border-box;
-  display: flex;
-  align-items: stretch;
-  gap: 4px;
-  padding: 0 10px;
-  /* Stay a single row within TABBAR_H on narrow windows: never wrap; scroll horizontally
-   * if the labels overrun (roving-tabindex Arrow keys still scroll off-screen tabs in). */
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  overflow-y: hidden;
-  background: var(--color-panel);
-  border-bottom: 1px solid var(--color-panel-edge);
-}
-
-.tab-bar__tab {
-  appearance: none;
-  margin: 3px 0 0 0;
-  padding: 0 18px;
-  font-family: var(--font-condensed);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 1.5px;
-  color: var(--color-legend-dim);
-  background: var(--color-panel-raised);
-  border: 1px solid var(--color-panel-edge);
-  border-bottom: none;
-  border-radius: 7px 7px 0 0;
-  cursor: pointer;
-  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
-}
-
-.tab-bar__tab:hover {
-  color: var(--color-legend);
-  border-color: var(--color-focus);
-}
-
-.tab-bar__tab--active {
-  color: var(--color-bg);
-  background: var(--color-knob);
-  border-color: var(--color-knob-hi);
-}
-
-/* Per-machine identity: a top stripe on the three voice tabs in the machine color, and the
- * active voice tab fills with it (active text stays dark for contrast — set above).
- * Patchbay / Sampler / FX keep the neutral gold active fill. Matches GROUP_BORDER and the
- * panel titles / faces / knob skirts / jack-field zone labels. */
-.tab-bar__tab--cascade {
-  box-shadow: inset 0 3px 0 var(--color-group-cascade);
-}
-.tab-bar__tab--anvil {
-  box-shadow: inset 0 3px 0 var(--color-group-anvil);
-}
-.tab-bar__tab--monarch {
-  box-shadow: inset 0 3px 0 var(--color-group-monarch);
-}
-.tab-bar__tab--courier {
-  box-shadow: inset 0 3px 0 var(--color-group-courier);
-}
-.tab-bar__tab--active.tab-bar__tab--cascade {
-  background: var(--color-group-cascade);
-  border-color: var(--color-group-cascade);
-}
-.tab-bar__tab--active.tab-bar__tab--anvil {
-  background: var(--color-group-anvil);
-  border-color: var(--color-group-anvil);
-}
-.tab-bar__tab--active.tab-bar__tab--monarch {
-  background: var(--color-group-monarch);
-  border-color: var(--color-group-monarch);
-}
-.tab-bar__tab--active.tab-bar__tab--courier {
-  background: var(--color-group-courier);
-  border-color: var(--color-group-courier);
-}
-
-/* The global focus ring (amber on gold) is ~1.19:1 on the active tab — effectively
- * invisible on the app's primary keyboard-nav surface. Swap to the dark page color on
- * that one element for a ~7.9:1 ring. Reuses existing tokens (no theme.ts mirror needed). */
-.tab-bar__tab--active:focus-visible {
-  outline-color: var(--color-bg);
-}
-
-/* One absolutely-positioned stage region per stage region (stage16x9.REGIONS). */
+/* One absolutely-positioned element per stage region (src/ui/stage.ts). */
 .region {
   position: absolute;
 }
@@ -246,78 +81,15 @@ body {
   height: 100%;
 }
 
-/* Group-border overlay (under cables, over panels) — never intercepts input. Mounts on
- * the PATCHBAY tab only. Pinned to the CONSOLE height (STAGE.h = 1015.42), NOT the full
- * .stage box (whose inline height on patchbay is the bbox bottom 1335.42): this SVG's
- * viewBox is the 1015.42-tall console, so a 100%-height stretch would (via the default
- * preserveAspectRatio) vertically center the outlines below their panels. The outlines
- * are in stage units and translate WITH the frame; the .stage-sizer's overflow:hidden
- * clips the control-half strokes that fall above the patchbay bbox (y < 644.78). */
-.group-borders {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 1015.42px; /* = STAGE.h (stage16x9.ts) */
-  pointer-events: none;
-  z-index: 4;
-}
-
-/* Full-stage cable overlay — never intercepts panel interaction; only the
- * cables' own fat hit strokes opt back in (pointer-events: stroke inline). */
-.cable-layer {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  overflow: visible;
-  z-index: 5;
-}
-
-/* Remaining-cable chip (D5) — rendered by CableLayer, so it appears on the PATCHBAY tab
- * ONLY. The .cable-layer is inset:0 of .stage, whose inline height on patchbay is the
- * bbox bottom (1335.42). top: calc(1015.42px − 32px) = 983.42 falls BETWEEN the jack
- * field top (644.78) and the sampler-jacks zone (y ≥ 1015.42), i.e. INSIDE the patchbay
- * window's jack band — so the chip reads against the patch field as intended (mid-field).
- * If it ever reads too high, switch to calc(1335.42px − 32px) (patchbay bbox bottom);
- * the canonical default is 1015.42 (lands within the jack band). Overlay-only. */
-.cable-chip {
-  position: absolute;
-  top: calc(1015.42px - 32px); /* 983.42 — inside the patchbay jack band (mid-field) */
-  right: 12px;
-  z-index: 6;
-  pointer-events: none;
-  font-size: 11px;
-  letter-spacing: 2px;
-  color: var(--color-legend-dim);
-  background: var(--color-panel-raised);
-  border: 1px solid var(--color-panel-edge);
-  border-radius: 10px;
-  padding: 3px 10px;
-}
-
-/* Module/strip panel SVG roots. */
+/* Panel SVG roots. */
 .panel {
   display: block;
   user-select: none;
   -webkit-user-select: none;
 }
 
-/* The jack field's region box overlaps the seq strip's bottom band in the
- * stepped notch (right of x 1117.56 above y 668.78 — nothing is painted
- * there). Let events fall through the empty notch to the strip below while
- * every painted element (jacks!) still hit-tests normally. */
-.panel--field {
-  pointer-events: none;
-}
-
-.panel--field * {
-  pointer-events: visiblePainted;
-}
-
-/* Interactive panel elements (knobs, switches, buttons, jacks). touch-action lives
- * here — NOT on .panel — so touch scrolling still works over panel artwork. */
+/* Interactive panel elements (knobs, switches, buttons). touch-action lives here —
+ * NOT on .panel — so scrolling still works over panel artwork. */
 .control {
   touch-action: none;
   cursor: pointer;
@@ -327,29 +99,12 @@ body {
   cursor: ns-resize;
 }
 
-/* Jacks are patch points — a crosshair distinguishes them from a knob (ns-resize) or a
- * button, hinting that you drag jack-to-jack to patch. */
-.control[data-jack-id] {
-  cursor: crosshair;
-}
-
-/* Hover affordance for jacks: the patchbay packs 113 sockets, so brightening the socket
- * under the cursor gives immediate target feedback while aiming a cable (the crosshair
- * cursor + the native <title> tooltip already name it). Desktop-only by nature (no hover
- * on touch); cheap CSS, no per-jack state/re-render. */
-.control[data-jack-id]:hover {
-  filter: brightness(1.28);
-}
-
 /*
- * D4 / §12.4: un-powered = suspended AudioContext + dimmed regions. Applied to
- * each stage region EXCEPT the utility strip (the POWER button stays bright).
- * Controls remain interactive — editing state with power off is allowed; the
- * engine just isn't running.
+ * Un-powered = suspended AudioContext + dimmed regions, applied to every region
+ * except the POWER control itself. Controls remain interactive — editing state with
+ * power off is allowed; the engine just isn't running.
  */
 .unpowered {
-  /* 0.7 (was 0.55) keeps an obvious "engine off" cue while lifting dimmed legend/LED text
-   * back clear of the AA floor. */
   filter: brightness(0.7) saturate(0.7);
   transition: filter 250ms ease;
 }
@@ -359,11 +114,39 @@ body {
   outline-offset: 2px;
 }
 
+/* Phase 0 placeholder — replaced by the real panel in Phase 3. */
+.shell-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 10px;
+  background: var(--color-panel);
+  color: var(--color-legend-dim);
+  font-family: var(--font-condensed);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+
+.shell-placeholder__title {
+  font-size: 46px;
+  letter-spacing: 14px;
+  color: var(--color-legend);
+}
+
+.shell-placeholder__sub {
+  font-size: 15px;
+  letter-spacing: 3px;
+}
+
 /*
- * Preset-picker overlay (PresetPicker.tsx — BACKLOG #1/#4). Plain HTML chrome
- * rendered OUTSIDE the transform:scale stage, so it is screen-pixel sized. z-index
- * 50 clears the cable-layer (5) / cable-chip (6) / group-borders (4) overlays.
- * All colors come from the same :root tokens that mirror theme.ts.
+ * Modal overlay (PresetPicker.tsx). Plain HTML chrome rendered OUTSIDE the
+ * transform:scale stage, so it is screen-pixel sized. All colors come from the same
+ * :root tokens that mirror theme.ts.
  */
 .preset-overlay {
   position: fixed;
@@ -378,10 +161,7 @@ body {
 .preset-card {
   box-sizing: border-box;
   width: min(520px, 92vw);
-  /* vh fallback first (iOS <15.4), then dvh which wins where supported.
-   * dvh == vh on desktop, so the 1080p render is identical. */
   max-height: 80vh;
-  max-height: 80dvh;
   overflow-y: auto;
   padding: 20px 22px 22px;
   background: var(--color-panel-raised);
@@ -565,14 +345,7 @@ body {
   color: var(--color-legend-dim);
 }
 
-/* Factory-sound picker menu (SamplerPanel KitMenu, portaled to <body>). Rows carry an inline
- * color only (no inline background), so this hover rule gives unselected rows a pointer
- * affordance, matching the .preset-row hover polish. */
-.kit-menu li:hover {
-  background: var(--color-panel-edge);
-}
-
-/* POWER lamp (SVG circle in the utility strip — UtilityStrip.tsx). */
+/* POWER lamp (SVG circle). */
 .power-lamp {
   fill: var(--color-led-off);
 }
@@ -598,16 +371,13 @@ body {
   }
 }
 
-/* Respect the OS "reduce motion" setting (WCAG 2.3.3): stop the infinite power-pulse and the
- * tab/dim transitions. The power lamp falls back to its static off-state fill, so the off cue
- * stays visible. Additive — no existing rule's resting value changes. */
+/* Respect the OS "reduce motion" setting (WCAG 2.3.3): stop the infinite power-pulse and
+ * the dim transition. The power lamp falls back to its static off-state fill, so the off
+ * cue stays visible. Additive — no existing rule's resting value changes. */
 @media (prefers-reduced-motion: reduce) {
   .power-lamp--off {
     animation: none;
     fill: var(--color-led-off);
-  }
-  .tab-bar__tab {
-    transition: none;
   }
   .unpowered {
     transition: none;

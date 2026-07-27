@@ -28,7 +28,7 @@ const knob = (over: Partial<ControlDef> = {}): ControlDef => ({
 const lin10 = knob({ min: 0, max: 10 });
 const exp20k = knob({ min: 20, max: 20000, taper: 'exp', unit: 'Hz' });
 const sub16 = knob({
-  id: 'CAS_SUB_FREQ_1',
+  id: 'STEPPED_16',
   type: 'stepKnob',
   min: 1,
   max: 16,
@@ -133,44 +133,44 @@ describe('dragMath: stepped 16-step 1..16 knob', () => {
 describe('dragMath: stepKnob with lin taper is CONTINUOUS (sequencer step knobs)', () => {
   // type 'stepKnob' marks a sequencer STEP's knob, not a detented knob — detents
   // come only from taper 'stepped' / an explicit `steps` count.
-  const anvilPitch = knob({
-    id: 'ANV_SEQ_PITCH_1',
+  const seqPitch = knob({
+    id: 'SEQ_PITCH_1',
     type: 'stepKnob',
     min: -5,
     max: 5,
-    unit: 'vv',
+    unit: 'semi',
   });
-  const anvilVelocity = knob({
-    id: 'ANV_SEQ_VELOCITY_1',
+  const seqVelocity = knob({
+    id: 'SEQ_VELOCITY_1',
     type: 'stepKnob',
     min: 0,
     max: 5,
     default: 4,
-    unit: 'vv',
+    unit: 'semi',
   });
-  const cascadeStep = knob({ id: 'CAS_SEQ1_STEP_1', type: 'stepKnob', min: -1, max: 1 });
+  const seqStep = knob({ id: 'SEQ_STEP_1', type: 'stepKnob', min: -1, max: 1 });
 
   it('reports no detents', () => {
-    expect(stepCount(anvilPitch)).toBeNull();
-    expect(stepCount(anvilVelocity)).toBeNull();
-    expect(stepCount(cascadeStep)).toBeNull();
+    expect(stepCount(seqPitch)).toBeNull();
+    expect(stepCount(seqVelocity)).toBeNull();
+    expect(stepCount(seqStep)).toBeNull();
   });
 
-  it('does not snap Anvil pitch to whole octaves (1 vv/oct)', () => {
-    expect(normToValue(0.525, anvilPitch)).toBeCloseTo(0.25, 10);
-    expect(snapStepped(0.25, anvilPitch)).toBeCloseTo(0.25, 10); // no-op for continuous defs
-    expect(normToValue(valueToNorm(-2.37, anvilPitch), anvilPitch)).toBeCloseTo(-2.37, 10);
+  it('does not snap a step pitch knob to whole semitones', () => {
+    expect(normToValue(0.525, seqPitch)).toBeCloseTo(0.25, 10);
+    expect(snapStepped(0.25, seqPitch)).toBeCloseTo(0.25, 10); // no-op for continuous defs
+    expect(normToValue(valueToNorm(-2.37, seqPitch), seqPitch)).toBeCloseTo(-2.37, 10);
   });
 
-  it('does not collapse Cascade SEQ steps to {-1, 0, 1}', () => {
-    expect(normToValue(0.6, cascadeStep)).toBeCloseTo(0.2, 10);
-    expect(normToValue(valueToNorm(-0.37, cascadeStep), cascadeStep)).toBeCloseTo(-0.37, 10);
+  it('does not collapse bipolar SEQ steps to {-1, 0, 1}', () => {
+    expect(normToValue(0.6, seqStep)).toBeCloseTo(0.2, 10);
+    expect(normToValue(valueToNorm(-0.37, seqStep), seqStep)).toBeCloseTo(-0.37, 10);
   });
 
   it('readout keeps fractional precision (no integer-detent formatting)', () => {
-    expect(formatValue(0.25, anvilPitch)).toBe('0.25 vv');
-    expect(formatValue(-2.4, anvilPitch)).toBe('-2.4 vv');
-    expect(formatValue(3.5, anvilVelocity)).toBe('3.5 vv');
+    expect(formatValue(0.25, seqPitch)).toBe('0.25 semi');
+    expect(formatValue(-2.4, seqPitch)).toBe('-2.4 semi');
+    expect(formatValue(3.5, seqVelocity)).toBe('3.5 semi');
   });
 
   it('stepKnob WITH stepped taper + steps stays detented (SUB FREQ style)', () => {
@@ -222,21 +222,21 @@ describe('dragMath: formatValue', () => {
     expect(formatValue(0.05, hz)).toBe('0.050 Hz');
   });
 
-  it('s / BPM / % / vv / div are unit-aware', () => {
+  it('s / BPM / % / semi / div are unit-aware', () => {
     expect(formatValue(0.003, knob({ unit: 's' }))).toBe('0.003 s');
     expect(formatValue(120, knob({ min: 20, max: 300, unit: 'BPM' }))).toBe('120 BPM');
     expect(formatValue(62.4, knob({ min: 0, max: 100, unit: '%' }))).toBe('62%');
-    expect(formatValue(2.5, knob({ min: -5, max: 5, unit: 'vv' }))).toBe('2.5 vv');
+    expect(formatValue(2.5, knob({ min: -5, max: 5, unit: 'semi' }))).toBe('2.5 semi');
     expect(formatValue(7, sub16)).toBe('7 div');
     expect(formatValue(7.4, sub16)).toBe('7 div'); // stepped always shows the detent
   });
 
   it('scrubs negative zero and handles unitless defs', () => {
-    expect(formatValue(-0.0001, knob({ min: -5, max: 5, unit: 'vv' }))).toBe('0.000 vv');
+    expect(formatValue(-0.0001, knob({ min: -5, max: 5, unit: 'semi' }))).toBe('0.000 semi');
     expect(formatValue(0.5, knob())).toBe('0.50');
   });
 
-  it("'%' defs authored as 0..1 fractions display as 0..100% (Monarch PULSE WIDTH)", () => {
+  it("'%' defs authored as 0..1 fractions display as 0..100% (a duty cycle)", () => {
     const pulseWidth = knob({
       id: 'MON_PULSE_WIDTH',
       min: 0.02,
@@ -247,7 +247,7 @@ describe('dragMath: formatValue', () => {
     expect(formatValue(0.5, pulseWidth)).toBe('50%');
     expect(formatValue(0.02, pulseWidth)).toBe('2%');
     expect(formatValue(0.98, pulseWidth)).toBe('98%');
-    // 0..100-calibrated '%' defs (Monarch SWING) are untouched
+    // 0..100-calibrated '%' defs (a swing amount) are untouched
     expect(formatValue(62.4, knob({ min: 0, max: 100, unit: '%' }))).toBe('62%');
   });
 });

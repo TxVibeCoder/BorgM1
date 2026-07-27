@@ -1,12 +1,12 @@
 /**
  * UI type contracts (design-agent owned — see CONVENTIONS.md).
- * All x/y/w/h coordinates are SVG viewBox units inside the owning panel's
- * viewBox. Since the 16:9 redesign every panel viewBox maps 1:1 to stage px
- * (region sizes in src/ui/stage16x9.ts). Coordinates locate element CENTERS
- * for controls/jacks/LEDs and the top-left corner for sections.
+ * All x/y/w/h coordinates are SVG viewBox units inside the owning panel's viewBox.
+ * Every panel viewBox maps 1:1 to stage px (src/ui/stage.ts, a 7:4 design box).
+ * Coordinates locate element CENTERS for controls and LEDs, and the top-left
+ * corner for sections.
  */
 
-import type { ControlDef, JackDef } from '../../data/schema';
+import type { ControlDef } from '../../data/schema';
 
 export interface Pt {
   x: number;
@@ -25,26 +25,28 @@ export interface PanelSection {
 }
 
 /**
- * Per-module layout, authored by the panels agent, keyed by ControlDef/JackDef ids
- * from data/*.json. Panel components iterate this — never hard-code positions inline.
+ * Per-panel layout, keyed by ControlDef id. Panel components iterate this — never
+ * hard-code positions inline.
+ *
+ * The `1`/`2` rule (UI-SPEC §4): every per-oscillator control appears twice, so one
+ * layout is instantiated against both halves of the parameter model and the `2` copy
+ * greys out in SINGLE mode. `enabled` is the single flag that drives it.
  */
 export interface PanelLayout {
-  /** Panel viewBox width = its stage region width (stage16x9.ts REGIONS). */
+  /** Panel viewBox width = its stage region width (src/ui/stage.ts). */
   width: number;
   /** Panel viewBox height = its stage region height. */
   height: number;
-  /** Plain-text functional title (ModuleDef.displayName) — no trade dress. */
+  /** Plain-text functional title — no trade dress. */
   title: string;
   sections: PanelSection[];
   /** controlId -> position, optional knob size (default 'm') and label placement. */
   controls: Record<string, Pt & { size?: KnobSize; labelBelow?: boolean }>;
-  /** jackId -> position. */
-  jacks: Record<string, Pt>;
 }
 
 /**
  * Knob (and stepKnob). Value lives in ControlDef [min, max] space; the engine's
- * param adapter (src/engine/units.ts) applies the taper — not the UI.
+ * parameter adapter applies the taper — not the UI.
  */
 export interface KnobProps {
   def: ControlDef;
@@ -57,37 +59,38 @@ export interface KnobProps {
   /** Fires once on pointer release / double-click reset → single store commit. */
   onCommit: (v: number) => void;
   size?: KnobSize;
-  /** Optional machine-accent color (GROUP_BORDER) for the knob skirt — per-panel color coding. */
+  /** Optional accent color for the knob skirt — per-section color coding. */
   accent?: string;
-  /** Optional dim second line under the panel label (e.g. a live "≈ 120 BPM" tempo readout). */
+  /** Optional dim second line under the panel label (e.g. a live readout). */
   subLabel?: string;
   x: number;
   y: number;
 
-  // ---- Courier mod-assign gesture (optional; all knobs ignore these when unset) ----------
-  /**
-   * Fired when this knob is long-pressed (~450 ms hold, cancelled on >4px travel). The Courier
-   * panel wires it ONLY on the four mod-source host controls; on fire it arms "assign <source>".
-   */
+  // ---- long-press assign gesture (optional; all knobs ignore these when unset) ----------
+  // Inherited from SynthStack's Knob, where it drove mod-source assignment. Retained
+  // because the gesture (hold to arm, then drag any target to set a bipolar depth) is
+  // the cheapest way to expose EG Intensity / keyboard-tracking depths without another
+  // page. Unused until a phase wires it; every field is optional.
+  /** Fired on a ~450 ms hold, cancelled on >4 px travel. */
   onLongPress?: () => void;
   /**
    * Drives the assign-mode overlay AND the drag sink:
-   *   - 'source-armed': this knob is the active mod source (paints the focus ring).
-   *   - 'depth-target': a source is armed and this is a supported target — a normal vertical drag
-   *     scrubs the bipolar assignment depth (via onAssignDepthInput/Commit) instead of the knob's
-   *     own value, which is left untouched.
+   *   - 'source-armed': this knob is the armed source (paints the focus ring).
+   *   - 'depth-target': a source is armed and this is a supported target — a normal
+   *     vertical drag scrubs the bipolar depth via onAssignDepthInput/Commit instead
+   *     of the knob's own value, which is left untouched.
    *   - 'idle' / unset: ordinary knob behaviour.
    */
   assignMode?: 'idle' | 'source-armed' | 'depth-target';
-  /** Current assigned depth (-1..1) for THIS knob's route, when a source maps to it; drives the depth arc. */
+  /** Current assigned depth (-1..1) for THIS knob's route; drives the depth arc. */
   assignDepth?: number;
-  /** Short source tag (e.g. 'lfo1') for the assigned route — distinguishes multiple sources on one knob. */
+  /** Short source tag — distinguishes multiple sources on one knob. */
   assignTag?: string;
   /** Color of the source ring / depth-arc accent (the armed source's color). */
   assignColor?: string;
-  /** While in 'depth-target' mode: fires continuously during the depth scrub (local-only; no commit). */
+  /** While in 'depth-target': fires continuously during the scrub (local-only). */
   onAssignDepthInput?: (depth: number) => void;
-  /** While in 'depth-target' mode: fires once on release with the final depth (the single store commit). */
+  /** While in 'depth-target': fires once on release with the final depth. */
   onAssignDepthCommit?: (depth: number) => void;
 }
 
@@ -95,14 +98,14 @@ export interface SwitchProps {
   def: ControlDef;
   /** Current position — one of def.positions. */
   value: string;
-  /** New position → engine write + store commit (switch changes are discrete; no debounce). */
+  /** New position → engine write + store commit (discrete; no debounce). */
   onChange: (pos: string) => void;
   x: number;
   y: number;
 }
 
 export interface ButtonProps extends SwitchProps {
-  /** Drives the button's LED lamp (e.g. RUN lit while transport runs). */
+  /** Drives the button's LED lamp. */
   lit?: boolean;
   /**
    * Momentary buttons (e.g. HOLD): onChange(active pos) on pointerdown,
@@ -111,20 +114,7 @@ export interface ButtonProps extends SwitchProps {
   momentary?: boolean;
 }
 
-/**
- * Static jack socket (stage 1 — cables land in stage 2).
- * REQUIREMENT: the rendered hit-area element (r = JACK_RADIUS.hit) must carry
- * `data-jack-id={def.id}`; the stage-2 CableLayer hit-tests jacks through that
- * attribute. Tooltip content rule is in CONVENTIONS.md (panelLabel, direction,
- * signal, "normalled from X" when def.normalledTo is set).
- */
-export interface JackProps {
-  def: JackDef;
-  x: number;
-  y: number;
-}
-
-/** Sequencer step LED. `dim` = page-visible-but-not-current ghosting. */
+/** Step LED. `dim` = visible-but-not-current ghosting. */
 export interface StepLedProps {
   x: number;
   y: number;

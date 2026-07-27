@@ -37,7 +37,7 @@ export function formatElapsed(ms: number): string {
 /** Build the download filename. The timestamp string is INJECTED (the shell makes the
  *  one wall-clock read and passes it in) so this is pure. */
 export function buildRecordingFilename(timestamp: string, ext: string): string {
-  return `synthstack-${timestamp}.${ext}`;
+  return `borgm1-${timestamp}.${ext}`;
 }
 
 /** Map a recorder mime type to a file extension (default 'audio' for an unknown type). */

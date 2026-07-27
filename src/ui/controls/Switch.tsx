@@ -107,11 +107,11 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
         width={16}
         height={12}
         rx={3}
-        fill={COLORS.jackRing}
-        stroke={COLORS.jackRingDark}
+        fill={COLORS.metal}
+        stroke={COLORS.metalDark}
         strokeWidth={1}
       />
-      <line x1={-5} x2={5} y1={yOf(idx)} y2={yOf(idx)} stroke={COLORS.jackRingDark} strokeWidth={1} />
+      <line x1={-5} x2={5} y1={yOf(idx)} y2={yOf(idx)} stroke={COLORS.metalDark} strokeWidth={1} />
 
       {/* position captions beside the lever; active one bright. Clamped to 36
           units so long position names ("FREQUENCY") can't invade the neighbor. */}

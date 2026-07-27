@@ -22,9 +22,9 @@ export interface Transport {
   nextEventTime: number;
   /**
    * OPTIONAL: called once per pump (with the pump's now) BEFORE nextEventTime is read,
-   * so a transport that follows EXTERNAL state — e.g. the sampler loop clock reading the
-   * Monarch master phase — can refresh nextEventTime from the latest tempo/run state instead
-   * of the snapshot taken at its last UI tap. PURE given now() (no Date/Math.random).
+   * so a transport that follows EXTERNAL state — e.g. a slaved clock reading the master
+   * phase — can refresh nextEventTime from the latest tempo/run state instead of the
+   * snapshot taken at its last UI tap. PURE given now() (no Date/Math.random).
    */
   onPump?(now: number): void;
   /** PURE: events for the boundary at `time` (may include later times, e.g. gate-offs). */
@@ -71,7 +71,7 @@ export class Scheduler {
     this.beforePump?.(now);
     for (const { transport, bind } of this.transports.values()) {
       if (!transport.running) continue;
-      // refresh transports that follow external state (loop clock ← Monarch phase) before we
+      // refresh transports that follow external state (a slaved clock ← master phase) before we
       // read nextEventTime, so a live tempo/run-state change is honored from THIS pump on.
       transport.onPump?.(now);
       // throttled tab: fast-forward without scheduling stale audio (drop, don't burst)

@@ -1,15 +1,19 @@
 /**
- * Module definition schema.
- * The three data/*.json files are authored against this schema
- * and validated in test/unit/moduleData.test.ts.
+ * Control definition schema.
+ *
+ * Inherited from SynthStack minus everything patchbay: the jack definition, its
+ * control-voltage range annotation, the signal/direction vocabularies and the normalled-
+ * connection referential-integrity pass are all gone — the M1 has no patchbay and no
+ * cables, so a control is the only thing this file has to describe.
+ *
+ * Phase 3 authors the real parameter model straight from the 143-byte SysEx table
+ * and validates it against this, the way SynthStack's moduleData.test.ts did.
  */
 
-export type SignalType = 'audio' | 'cv' | 'gate' | 'clock' | 'midi';
-export type Direction = 'in' | 'out';
 export type Taper = 'lin' | 'exp' | 'stepped';
 
 export interface ControlDef {
-  id: string; // 'MON_CUTOFF'
+  id: string; // 'VDF_CUTOFF'
   panelLabel: string; // 'CUTOFF'
   type: 'knob' | 'switch' | 'button' | 'stepKnob';
   // knobs:
@@ -17,52 +21,24 @@ export interface ControlDef {
   max?: number;
   default?: number | string;
   taper?: Taper;
-  steps?: number; // stepped knobs (e.g. SUB FREQ 1..16)
-  unit?: string; // 'Hz' | 'vv' | 'BPM' | 's' | '%' | 'div' ...
+  steps?: number; // stepped knobs
+  unit?: string; // 'Hz' | 's' | '%' | 'dB' | 'semi' ...
   // switches/buttons:
-  positions?: string[]; // ['LP','HP'], ['OFF','ON','HELD'] ...
-  manualRef?: string; // 'Monarch p.14'
+  positions?: string[]; // ['SINGLE','DOUBLE','DRUMS'], ['OFF','ON'] ...
+  manualRef?: string; // "Owner's Manual p.44"
   notes?: string;
 }
 
-export interface JackDef {
-  id: string; // 'MON_VCF_CUTOFF_IN'
-  panelLabel: string;
-  direction: Direction;
-  signal: SignalType;
-  rangeVv?: [number, number]; // informational, from manual
-  normalledTo?: string | null; // for INPUTS: jack id or 'INTERNAL:<sourceId>' broken by patching
-  feedsInternal?: string; // what this input modulates (free text, from manual)
-  manualRef?: string;
-  notes?: string;
-}
-
-export interface ModuleDef {
-  id: 'monarch' | 'anvil' | 'cascade' | 'sampler' | 'courier';
-  displayName: string;
-  /** Internal (non-jack) signal sources that normals may reference via 'INTERNAL:<id>'. */
-  internalSources: string[];
-  controls: ControlDef[];
-  jacks: JackDef[];
-  sequencer?: Record<string, unknown>; // module-specific block, shapes given in §10–§11
-}
-
-const SIGNAL_TYPES: SignalType[] = ['audio', 'cv', 'gate', 'clock', 'midi'];
-const DIRECTIONS: Direction[] = ['in', 'out'];
 const TAPERS: Taper[] = ['lin', 'exp', 'stepped'];
 const CONTROL_TYPES = ['knob', 'switch', 'button', 'stepKnob'];
 
 /** Returns a list of human-readable validation errors (empty = valid). */
-export function validateModuleDef(def: ModuleDef): string[] {
+export function validateControlDefs(scope: string, controls: ControlDef[]): string[] {
   const errors: string[] = [];
-  const err = (msg: string) => errors.push(`[${def.id}] ${msg}`);
+  const err = (msg: string) => errors.push(`[${scope}] ${msg}`);
 
-  if (!['monarch', 'anvil', 'cascade', 'sampler', 'courier'].includes(def.id)) err(`bad module id`);
-  if (!def.displayName) err('missing displayName');
-
-  // --- controls ---
   const controlIds = new Set<string>();
-  for (const c of def.controls) {
+  for (const c of controls) {
     if (controlIds.has(c.id)) err(`duplicate control id ${c.id}`);
     controlIds.add(c.id);
     if (!CONTROL_TYPES.includes(c.type)) err(`${c.id}: bad control type ${c.type}`);
@@ -90,37 +66,6 @@ export function validateModuleDef(def: ModuleDef): string[] {
     }
     if (c.type === 'button' && c.positions && typeof c.default === 'string') {
       if (!c.positions.includes(c.default)) err(`${c.id}: default '${c.default}' not in positions`);
-    }
-  }
-
-  // --- jacks ---
-  const jackIds = new Set<string>();
-  const outputIds = new Set<string>();
-  for (const j of def.jacks) {
-    if (jackIds.has(j.id)) err(`duplicate jack id ${j.id}`);
-    jackIds.add(j.id);
-    if (j.direction === 'out') outputIds.add(j.id);
-    if (!DIRECTIONS.includes(j.direction)) err(`${j.id}: bad direction`);
-    if (!SIGNAL_TYPES.includes(j.signal)) err(`${j.id}: bad signal type ${j.signal}`);
-    if (!j.panelLabel) err(`${j.id}: missing panelLabel`);
-    if (!j.manualRef) err(`${j.id}: missing manualRef`);
-    if (j.rangeVv && !(j.rangeVv.length === 2 && j.rangeVv[0] <= j.rangeVv[1])) {
-      err(`${j.id}: bad rangeVv`);
-    }
-    if (j.normalledTo != null && j.direction === 'out') {
-      err(`${j.id}: outputs cannot have normals`);
-    }
-  }
-
-  // --- normal referential integrity ---
-  const internal = new Set(def.internalSources);
-  for (const j of def.jacks) {
-    if (j.normalledTo == null) continue;
-    if (j.normalledTo.startsWith('INTERNAL:')) {
-      const src = j.normalledTo.slice('INTERNAL:'.length);
-      if (!internal.has(src)) err(`${j.id}: normalledTo unknown internal source '${src}'`);
-    } else if (!outputIds.has(j.normalledTo)) {
-      err(`${j.id}: normalledTo unknown output jack '${j.normalledTo}'`);
     }
   }
 

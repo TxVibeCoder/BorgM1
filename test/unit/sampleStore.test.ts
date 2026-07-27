@@ -154,8 +154,12 @@ describe('sample portability (base64 + export/import)', () => {
     expect(new TextDecoder().decode(base64ToArrayBuffer('TWFu'))).toBe('Man');
   });
 
-  it('base64 round-trips a ~MAX_SAMPLE_BYTES random buffer byte-identical (no overflow)', () => {
-    const src = new Uint8Array(MAX_SAMPLE_BYTES);
+  it('base64 round-trips a multi-megabyte random buffer byte-identical (no overflow)', () => {
+    // 4 MiB, not MAX_SAMPLE_BYTES: the point is to cross the chunk boundary that a naive
+    // String.fromCharCode.apply(null, wholeArray) would blow the stack on. Since the cap
+    // rose to 64 MiB, tying this to it would allocate ~150 MiB (buffer + base64 string)
+    // for no extra coverage.
+    const src = new Uint8Array(4 * 1024 * 1024);
     // deterministic pseudo-random fill — avoids a flaky test while exercising the chunked path
     let seed = 0x9e3779b9;
     for (let i = 0; i < src.length; i++) {
@@ -249,11 +253,16 @@ describe('sample portability (base64 + export/import)', () => {
 
   it('importSamples skips malformed + over-cap entries while importing the rest', async () => {
     const be = new MemoryBackend();
+    // Build the over-cap base64 DIRECTLY rather than encoding a real MAX_SAMPLE_BYTES
+    // buffer: 'A' decodes to byte 0, and every 4 chars is 3 bytes, so this is the same
+    // input the encoder would produce for a zero-filled buffer one group past the cap —
+    // without spending seconds in the string-concat encoder to build it.
+    const overCapGroups = Math.ceil((MAX_SAMPLE_BYTES + 1) / 3);
     const overCap: SampleBundleEntry = {
       id: 'too-big',
       name: 'huge',
       mime: 'audio/wav',
-      bytesBase64: arrayBufferToBase64(new ArrayBuffer(MAX_SAMPLE_BYTES + 1)),
+      bytesBase64: 'A'.repeat(overCapGroups * 4),
     };
     const good: SampleBundleEntry = {
       id: 'good-1',

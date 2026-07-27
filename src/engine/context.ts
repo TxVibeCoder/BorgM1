@@ -1,33 +1,28 @@
 /**
  * AudioContext lifecycle, power switch, master bus.
  * Power ON is the user-gesture unlock; power OFF suspends. Master chain:
- * masterIn -> insertSlot (passthrough) -> masterVolume -> softClip -> destination.
- * Effects later are a node swap at insertSlot, not a refactor.
+ *   masterIn -> insertSlot (passthrough) -> masterVolume -> softClip -> destination.
+ * The effects section (Phase 4) is a node swap at insertSlot, not a refactor.
+ *
+ * WORKLET_URLS holds only the PCM capture tap until Phase 2 lands the voice
+ * processor. When it does there will be exactly ONE more entry: a single processor
+ * owns all 16 oscillator slots (CLAUDE.md), so this list is not expected to grow
+ * with the engine.
+ *
+ * The iOS unlock dance SynthStack carried (in-gesture resume() before any await,
+ * plus a one-frame silent BufferSource) is gone — BorgM1 is PC-only, which also
+ * dodges mobile Safari's uncatchable ~100–200 MB audio-memory crash.
  */
 
 // ?worker&url (not plain ?url): plain ?url ships the RAW .ts as an inlined
 // data:video/mp2t asset in builds — uncompiled, unloadable. ?worker&url compiles
-// the worklet module graph (including the dsp cores) into a real emitted chunk
+// the worklet module graph (including the pure DSP cores) into a real emitted chunk
 // that addModule() can load in both dev and build.
-import oscWorkletUrl from './worklets/osc.worklet.ts?worker&url';
-import ladderWorkletUrl from './worklets/ladder.worklet.ts?worker&url';
-import egWorkletUrl from './worklets/eg.worklet.ts?worker&url';
-import edgeWorkletUrl from './worklets/edge.worklet.ts?worker&url';
-import cvSampleWorkletUrl from './worklets/cvSample.worklet.ts?worker&url';
 import pcmTapWorkletUrl from './worklets/pcmTap.worklet.ts?worker&url';
 import { MasterRecorder } from './recorder';
 import type { RecordFormat } from './recordHelpers';
-import { MasterFxChain, type MasterFxId } from './fx/masterFxChain';
-import type { MasterEffectsState } from '../state/studioState';
 
-export const WORKLET_URLS = [
-  oscWorkletUrl,
-  ladderWorkletUrl,
-  egWorkletUrl,
-  edgeWorkletUrl,
-  cvSampleWorkletUrl,
-  pcmTapWorkletUrl,
-];
+export const WORKLET_URLS = [pcmTapWorkletUrl];
 
 /** Load our worklet modules into any context (each Offline context needs this too). */
 export async function loadWorklets(ctx: BaseAudioContext): Promise<void> {
@@ -50,20 +45,17 @@ export class StudioContext {
   private ctx: AudioContext | null = null;
   private _masterIn: GainNode | null = null;
   private insertSlot: GainNode | null = null;
-  private masterFx: MasterFxChain | null = null;
   private masterVolume: GainNode | null = null;
   private softClip: WaveShaperNode | null = null;
   private workletsLoaded = false;
   private powered = false;
-  /** Lazy master-output recorder (recording feature) — built on first record off the
-   *  softClip tap; null until then and before powerOn builds the graph. Runtime-only
-   *  (never serialized). */
+  /** Lazy master-output recorder — built on first record off the softClip tap; null
+   *  until then and before powerOn builds the graph. Runtime-only (never serialized). */
   private recorder: MasterRecorder | null = null;
   onStateChange: ((powered: boolean) => void) | null = null;
 
   /** Must be called from a user gesture (autoplay policy). */
   async powerOn(): Promise<AudioContext> {
-    const firstBuild = !this.ctx;
     if (!this.ctx) {
       this.ctx = new AudioContext({ latencyHint: 'interactive' });
       this._masterIn = this.ctx.createGain();
@@ -73,28 +65,14 @@ export class StudioContext {
       this.softClip = this.ctx.createWaveShaper();
       this.softClip.curve = makeSoftClipCurve() as Float32Array<ArrayBuffer>;
       this.softClip.oversample = '2x';
-      // Master FX chain occupies the reserved insertSlot:
-      //   masterIn → insertSlot → [flanger→delay→reverb→fold] → masterVolume → softClip → dest.
-      // Built once (effects are dry-only when off), captured by the softClip recorder tap.
-      // 'master' target: the signal here is already ~±1 (mixer applied vvScale ×0.2 + level),
-      // so the FOLD shaper uses ioScale ~1.0 (a per-voice 0.2 would fold ~5× too weakly).
-      this.masterFx = new MasterFxChain(this.ctx, 'master');
       this._masterIn.connect(this.insertSlot);
-      this.insertSlot.connect(this.masterFx.input);
-      this.masterFx.output.connect(this.masterVolume);
+      this.insertSlot.connect(this.masterVolume);
       this.masterVolume.connect(this.softClip).connect(this.ctx.destination);
       this.ctx.addEventListener('statechange', () => {
         this.onStateChange?.(this.ctx?.state === 'running');
       });
     }
-    // iOS Safari unlocks audio ONLY when resume() runs synchronously inside the POWER
-    // user-gesture, before any `await` yields the call stack. loadWorklets() awaits
-    // addModule(), so kick resume() (and a one-shot silent buffer some iOS versions still
-    // need) FIRST, then await the worklet load and the resume. The POWER click chain
-    // reaches here synchronously, so these calls are in-gesture. Without this, iOS leaves
-    // the context 'suspended': no sound AND a frozen sequencer (currentTime never advances).
     const resuming = this.ctx.resume();
-    if (firstBuild) this.kickSilentBuffer(this.ctx);
     if (!this.workletsLoaded) {
       await loadWorklets(this.ctx);
       this.workletsLoaded = true;
@@ -102,20 +80,6 @@ export class StudioContext {
     await resuming;
     this.powered = true;
     return this.ctx;
-  }
-
-  /** iOS first-unlock kick: play one frame of silence within the gesture. Harmless on
-   *  other platforms; some iOS Safari versions require an actual BufferSource.start() to
-   *  unlock output, beyond resume(). */
-  private kickSilentBuffer(ctx: AudioContext): void {
-    try {
-      const src = ctx.createBufferSource();
-      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
-      src.connect(ctx.destination);
-      src.start(0);
-    } catch {
-      /* non-fatal */
-    }
   }
 
   async powerOff(): Promise<void> {
@@ -145,28 +109,12 @@ export class StudioContext {
     if (this.masterVolume) this.masterVolume.gain.value = v01;
   }
 
-  // ---- master effects (Wave 2) — the FX chain at insertSlot --------------------------------
-
-  setMasterFxOn(id: MasterFxId, on: boolean): void {
-    this.masterFx?.setOn(id, on);
-  }
-
-  setMasterFxParam(id: MasterFxId, param: string, value: number): void {
-    this.masterFx?.setParam(id, param, value);
-  }
-
-  /** Push a whole effects.master slice into the graph (load / INIT / preset). */
-  applyMasterEffects(state: MasterEffectsState): void {
-    this.masterFx?.applyMasterEffects(state);
-  }
-
-  // ---- master-output recording (feature: recording) -------------------------------------
+  // ---- master-output recording ------------------------------------------------------
   // The recorder taps softClip (the final audible node) via an ADDITIVE fan-out — the
   // softClip->destination edge is never touched, so monitoring continues. It is owned
   // here because it needs the private ctx + softClip; the bridge only forwards.
 
-  /** Build the recorder on first use. Returns null before powerOn builds the graph
-   *  (softClip is null until powerOn). */
+  /** Build the recorder on first use. Returns null before powerOn builds the graph. */
   private getRecorder(): MasterRecorder | null {
     if (!this.softClip || !this.ctx) return null;
     if (!this.recorder) this.recorder = new MasterRecorder(this.ctx, this.softClip);

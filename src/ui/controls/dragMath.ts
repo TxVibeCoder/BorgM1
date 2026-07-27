@@ -11,17 +11,16 @@
  *     for the 1..16-style step knobs).
  *
  * Detents come ONLY from `taper: 'stepped'` or an explicit `steps` count.
- * `type: 'stepKnob'` marks a sequencer STEP's knob (Anvil pitch/velocity rows,
- * Cascade SEQ 1/2 steps) — those are continuous (`taper: 'lin'`) and must
- * NOT be quantized.
+ * `type: 'stepKnob'` marks a sequencer STEP's knob — those are continuous
+ * (`taper: 'lin'`) and must NOT be quantized.
  */
 
 import type { ControlDef } from '../../../data/schema';
 
 /**
- * Mirrors of theme.ts DRAG_FULL_SWEEP_PX / FINE_DRAG_FACTOR / KNOB_SWEEP_DEG.
- * theme.ts re-exports engine code (CABLE_COLORS from src/engine/studio), so importing
- * it here would drag the whole engine into this pure module and its Node tests.
+ * Mirrors of theme.ts DRAG_FULL_SWEEP_PX / FINE_DRAG_FACTOR / KNOB_SWEEP_DEG, duplicated
+ * rather than imported so this module stays pure: theme.ts is a UI module, and a Node
+ * unit test of drag math should not have to pull the UI graph in behind it.
  * Change together with theme.ts or not at all.
  */
 export const DRAG_FULL_SWEEP_PX = 200;
@@ -114,8 +113,8 @@ export function normToAngle(norm: number): number {
  * Unit-aware display string (<= 4 significant digits for the readout rule):
  * |v| >= 100 -> 0 decimals, >= 1 -> 1, >= 0.1 -> 2, else 3. '%' / 'BPM' / 'div'
  * read as integers from 1 up. Stepped defs always render their integer detent.
- * '%' defs authored as 0..1 fractions (max <= 1, e.g. Monarch PULSE WIDTH duty cycle)
- * display scaled to 0..100; 0..100-calibrated '%' defs (Monarch SWING) pass through.
+ * '%' defs authored as 0..1 fractions (max <= 1, e.g. a duty cycle) display scaled to
+ * 0..100; '%' defs already calibrated 0..100 (e.g. a swing amount) pass through.
  * '%' attaches without a space; other units get one.
  */
 export function formatValue(value: number, def: ControlDef): string {

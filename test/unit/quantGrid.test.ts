@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 import {
   QUANT_CYCLE,
   type PhaseRef,
@@ -7,15 +7,16 @@ import {
   barPeriodS,
   nextBoundary,
   RELAUNCH_SIXTEENTHS,
+  stepDurS,
+  swingOffsetS,
 } from '../../src/engine/quantGrid';
-import { monarchStepDurS, swingOffsetS } from '../../src/engine/units';
 
 /** A running phase whose bar downbeat sits at `anchorTime` (120 BPM unless overridden). */
 function runningPhase(anchorTime = 0, bpm = 120): PhaseRef {
-  return { running: true, tempoBpm: bpm, anchorTime, sixteenthDurS: monarchStepDurS(bpm) };
+  return { running: true, tempoBpm: bpm, anchorTime, sixteenthDurS: stepDurS(bpm) };
 }
 
-describe('quantGrid — sampler launch grid (feature: loop-quantize)', () => {
+describe('quantGrid — tempo grid', () => {
   it('QUANT_CYCLE is the 6 positions in order', () => {
     expect(QUANT_CYCLE).toEqual(['OFF', '1/16', '1/8', '1/4', '1/2', '1 BAR']);
   });
@@ -105,11 +106,11 @@ describe('quantGrid — sampler launch grid (feature: loop-quantize)', () => {
   });
 
   it('SWING-IMMUNITY: the anchor (un-swung baseTime grid) is independent of swing %', () => {
-    // The studio derives PhaseRef.anchorTime from monarchseq.baseTime (un-swung), NOT the
+    // The clock derives PhaseRef.anchorTime from its un-swung baseTime, NOT the
     // swung nextEventTime. Model that derivation here for two swing settings and prove
     // the resulting boundary is identical — the grid never inherits the gate swing.
     const bpm = 120;
-    const stepDur = monarchStepDurS(bpm);
+    const stepDur = stepDurS(bpm);
     // baseTime accumulates stepDur per tick regardless of swing; swing only offsets odd
     // ticks' nextEventTime. anchorTime = baseTime - (tickCount % 16) * stepDur.
     function phaseAt(tickCount: number, _swingPct: number): PhaseRef {

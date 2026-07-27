@@ -86,10 +86,10 @@ function loadProcessor(): { proc: TapProcessor; posts: PostCall[] } {
   return { proc: new (RegisteredClass as new () => TapProcessor)(), posts };
 }
 
-function stereoBlock(): Float32Array[][] {
-  const l = new Float32Array(128);
-  const r = new Float32Array(128);
-  for (let i = 0; i < 128; i++) {
+function stereoBlock(frames = 128): Float32Array[][] {
+  const l = new Float32Array(frames);
+  const r = new Float32Array(frames);
+  for (let i = 0; i < frames; i++) {
     l[i] = Math.sin(i / 10);
     r[i] = Math.cos(i / 10);
   }
@@ -123,5 +123,21 @@ describe('pcmTap.worklet — no per-block array allocation (thin-shell rule)', (
     // Each block ships the two slot buffers (the forced realloc keeps next block's buffers fresh).
     proc.process(stereoBlock());
     expect(posts[1]!.channels.length).toBe(2);
+  });
+
+  it('sizes its slots from the ACTUAL quantum, not a hardcoded 128', () => {
+    // CLAUDE.md: don't read the render quantum as 128. Web Audio 1.1 renderSizeHint
+    // ships in Chrome M153, so a 256-frame quantum must copy all 256 frames — the old
+    // code truncated to 128 and silently dropped half of every block.
+    const { proc, posts } = loadProcessor();
+    const block = stereoBlock(256);
+    proc.process(block);
+    expect(posts[0]!.channels[0]!.length).toBe(256);
+    expect(posts[0]!.channels[0]![255]).toBeCloseTo(Math.sin(255 / 10), 6);
+
+    // and a quantum CHANGE mid-stream re-sizes rather than truncating or overrunning
+    proc.process(stereoBlock(128));
+    expect(posts[1]!.channels[0]!.length).toBe(128);
+    expect(posts[1]!.channels[0]![127]).toBeCloseTo(Math.sin(127 / 10), 6);
   });
 });

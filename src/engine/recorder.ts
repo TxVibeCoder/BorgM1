@@ -169,7 +169,7 @@ export class MasterRecorder {
     if (!this.wavSupported) return false;
     try {
       if (this.pcmNode === null) {
-        this.pcmNode = new AudioWorkletNode(this.ctx, 'synthstack-pcm-tap', {
+        this.pcmNode = new AudioWorkletNode(this.ctx, 'borgm1-pcm-tap', {
           numberOfInputs: 1,
           numberOfOutputs: 0,
         });
