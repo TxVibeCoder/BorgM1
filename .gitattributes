@@ -1,3 +1,7 @@
 * text=auto eol=lf
+# cmd.exe misparses an LF-only batch file — it drops the leading characters of
+# every line, so `rem` becomes `m` and `cd /d` becomes `/d`. Launchers MUST be CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
 *.pdf binary
 *.png binary
