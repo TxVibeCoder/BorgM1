@@ -183,3 +183,71 @@ collision fails loudly instead of drifting to 5185) and the stage renders at exa
 no horizontal scroll · `npm test` **169 green across 13 files** · `npm run build` clean, base
 path `/BorgM1/` · `npm run typecheck` clean · the JSON round-trip test exists from day one, 21
 cases, not retrofitted.
+
+---
+
+## 2026-07-27 — Phase 1: sample pipeline
+
+**Both sound lists are recovered and pinned.** 100 multisounds and 44 drums, transcribed from
+the Owner's Manual and cross-checked across four OCR passes of two scans. Both lists are
+printed *twice* in the manual in different layouts, which resolved the two OCR ambiguities
+without circularity: `68 BasThumNT2` (one pass duplicated NT1) and `76 VoiceWvNT2` (lowercase
+`t`). The decoy drum list in the overview section is avoided and a test asserts its names never
+appear. **`NT` is confirmed from the manual, not inferred** — "(NT) = same pitch regardless of
+key played", i.e. No Tracking, a fixed-pitch flag.
+
+**`sharesSampleWith` is declared data, not derived from names.** An NT multisound is the same
+ROM sample with tracking off, so the build must not source a second sample for it — an
+independently sourced one would make the pair audibly different where the hardware's are
+identical. The LCD abbreviations defeat any name heuristic (`DistNT`→`Distortion`,
+`BasThumNT1`→`BassThumb`, `VoiceWvNT1`→`VoiceWave`) and a match loose enough to catch them
+would pair unrelated sounds. Useful consequence: **only 63 of the 100 multisounds need a sample
+sourced** — 14 are NT references, 23 are the computed DWGS block.
+
+**Indexing is deliberately non-uniform.** Multisounds are 0-based, drums are 1-based, exactly
+as the manual prints them and as the SysEx values run. Pinned by test so nobody "fixes" it.
+
+**The bake order is the load-bearing decision:** rebase → resample → normalize → crossfade →
+truncate+guard → int16. Each step consumes signal a later one needs. Truncating early is the
+tempting optimisation and it is a bug: the resampler kernel and the crossfade read window both
+reach past `loopEnd` into the release tail, so cutting first makes both read zeros and puts a
+notch at exactly the seam the pipeline exists to protect.
+
+**Crossfade is equal-GAIN, not equal-power. Labelled a choice, not an M1 fact.** The two
+blended regions are the same tone one loop-period apart, so they correlate, and a sin/cos pair
+bulges up to +3 dB mid-fade — heard as a swell at exactly the loop rate.
+
+**Loop LENGTH is scaled, not the end point.** Rounding both loop points independently lets the
+length drift a sample; length is the pitch-critical quantity, so the error lands as ~8 cents of
+detune on the sustain only, appearing the moment a note reaches its loop. Swept 1600 cases: the
+invariant always holds, the naive form drifts on 100+ of them.
+
+**Int16 scale is 32767, not 32768.** Scaling by 32768 puts +1.0 on a code that does not exist;
+it wraps to −32768, inverting a full-scale positive peak into a full-scale negative one — the
+loudest possible click, on precisely the samples most likely to reach 1.0.
+
+### Measured against the real FluidR3_GM, not assumed
+
+`scripts/probeSf2.ts` exists to answer these from the file rather than from documentation. Both
+answers change the extractor.
+
+- **`spessasynth_core` already rebases loop points.** They are relative to each sample, not
+  absolute into the global `smpl` chunk. **Do not subtract `dwStart` again** — the extractor
+  passes `dwStart: 0`. (`rebaseLoop` stays in `loopCore` for a future raw-RIFF path, and
+  because it documents the trap.)
+- **`loopEnd` is EXCLUSIVE**: loop length = `loopEnd − loopStart`. This matters because
+  **spessasynth_core's own docs contradict each other** — the field comment says exclusive, the
+  constructor's `@param` says inclusive. Measured by periodicity (under a period *L*, the
+  window before `loopStart` must match the window before `loopEnd`): **1013 exclusive vs 66
+  inclusive** across 1094 samples, mean mismatch ratio 4.0. Agrees with the SF2 spec.
+- **A weak metric gave a confidently wrong answer first.** Comparing single samples either side
+  of the wrap by value said INCLUSIVE, 858 to 366. Two adjacent samples on a smooth waveform
+  are nearly equal, so that test measures which one happens to sit closer in value, not which
+  one precedes the other. Worth remembering the next time a cheap check looks decisive.
+- FluidR3_GM: 189 presets, 193 instruments, 1418 samples, **100% of them looped**. Rates are
+  mostly 44100 (817) and 32000 (328) — 328 already sit at the target rate and pass through the
+  resampler as a copy.
+
+**The SF2 is not vendored.** 141 MB for a file the app never loads (it loads the *built bank*).
+`scripts/bankConfig.ts` resolves it from `BORGM1_SF2`, then `assets/`, then a sibling project's
+copy — read-only.
