@@ -1,0 +1,34 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Research payload — scanned PDFs and page renders, ~193 MB. Local only.
+research/
+
+# Generated sample bank (built from CC-licensed sources at build time)
+public/bank/
+src/assets/bank/
+
+# Editor / tooling
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Test + build output
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
