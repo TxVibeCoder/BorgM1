@@ -193,12 +193,16 @@ export const DRUM_SOURCES: Readonly<Record<number, DrumSource | PitchedHitSource
   22: kit(0, 'Standard', 54), // Tambourine
   23: kit(24, 'Electronic', 50), // High Tom, electronic kit
   24: kit(0, 'Standard', 51), // Ride Cymbal 1
-  25: kit(16, 'Power', 39, true), // "Rap" is a vocal hit; GM has nothing like it
+  // "Rap" is a vocal stab; GM has nothing like it. NOT another kit's note 39 — FluidR3's
+  // kits share one clap sample, so Standard/Room/Power/39 are the same audio and the
+  // duplicate check rejects them. Orchestra Hit is at least a distinct stab.
+  25: hit(55, 'Orchestra Hit', 60, true),
   26: kit(0, 'Standard', 58, true), // Vibraslap standing in for Whip
   27: kit(0, 'Standard', 70), // Maracas
   28: kit(0, 'Standard', 76, true), // Hi Wood Block for Pole
   29: kit(0, 'Standard', 77), // Low Wood Block
-  30: kit(8, 'Room', 39, true), // FingerSnap
+  30: hit(115, 'Woodblock', 96, true), // FingerSnap — a high tick; note 96 keeps it clear
+  //                                      of the metronome clicks at 84 and 72
   31: kit(0, 'Standard', 78, true), // Mute Cuica for Drop
   32: hit(11, 'Vibraphone', 72), // VibeHit
   33: hit(116, 'Taiko Drum', 48, true), // Hammer

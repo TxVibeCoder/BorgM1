@@ -78,6 +78,17 @@ interface MultisoundEntry {
   sharesSampleWith: number | null;
   source: string;
   approx: boolean;
+  /**
+   * Lowest and highest key that sounds, or -1/-1 if nothing does.
+   *
+   * Multisounds routinely do NOT cover 0..127, and that is AUTHENTIC, not a sourcing gap:
+   * the Owner's Manual states "since each multisound waveform has a limited pitch range,
+   * it may not sound when played in a high octave". Extending the top zone to 127 would be
+   * a plausible-looking "fix" that quietly removes real hardware behaviour, so the range
+   * is recorded instead and the engine can go silent above it exactly as the M1 does.
+   */
+  keyLow: number;
+  keyHigh: number;
   zones: KeyZone[];
 }
 
@@ -87,6 +98,16 @@ interface DrumEntry {
   source: string;
   approx: boolean;
   sampleId: string;
+  /**
+   * MIDI note this drum sounds AT. Not decoration — several GM presets have a single zone
+   * spanning the whole keyboard, so four M1 tubular bells all resolve to one sample and
+   * the only thing distinguishing them is the pitch it is played at. Drop this and the
+   * four bells (and both metronome clicks) come out identical.
+   */
+  note: number;
+  /** Root key of the sample, so the engine can compute the playback ratio directly. */
+  rootKey: number;
+  fineCents: number;
 }
 
 function loadBank(path: string) {
@@ -196,6 +217,12 @@ function main(): void {
   }
 
   // ---- 2. sourced multisounds --------------------------------------------------------
+  /** Sounding range of a zone list; -1/-1 when nothing sounds. */
+  const rangeOf = (z: KeyZone[]) =>
+    z.length === 0
+      ? { keyLow: -1, keyHigh: -1 }
+      : { keyLow: Math.min(...z.map((x) => x.keyLow)), keyHigh: Math.max(...z.map((x) => x.keyHigh)) };
+
   /** multisound index -> its zones, so NT variants can copy their sibling's. */
   const zonesByIndex = new Map<number, KeyZone[]>();
 
@@ -212,6 +239,7 @@ function main(): void {
         sharesSampleWith: null,
         source: 'DWGS additive (rendered)',
         approx: !DWGS_RECIPES.find((r) => r.index === ms.index)?.exact,
+        ...rangeOf(zones),
         zones,
       });
       continue;
@@ -232,6 +260,7 @@ function main(): void {
         sharesSampleWith: ms.sharesSampleWith,
         source: `shares ${ms.sharesSampleWith}`,
         approx: false,
+        ...rangeOf(sibling),
         zones: sibling,
       });
       continue;
@@ -287,6 +316,7 @@ function main(): void {
       sharesSampleWith: null,
       source: `GM ${src.program} ${src.preset}`,
       approx: src.approx === true,
+      ...rangeOf(zones),
       zones,
     });
   }
@@ -327,6 +357,9 @@ function main(): void {
       source: src.kind === 'drum' ? `kit ${src.preset} note ${src.note}` : `GM ${src.program} ${src.preset} note ${src.note}`,
       approx: src.approx === true,
       sampleId: id,
+      note: src.note,
+      rootKey: v.rootKey,
+      fineCents: Math.round(v.cents),
     });
   }
 
@@ -347,6 +380,23 @@ function main(): void {
     drums,
   };
   writeFileSync(join(BANK_OUT_DIR, 'bank.json'), JSON.stringify(manifest, null, 1));
+
+  // ---- 4b. no two drums may be indistinguishable --------------------------------------
+  //
+  // Several GM presets have a single zone spanning the whole keyboard, so asking for four
+  // different notes returns the same sample four times. That is fine — they differ by
+  // pitch — but only if the pitch is actually carried through. Same sample AND same note
+  // means two drum sounds that can never be told apart, which is what this catches.
+  const drumKey = new Map<string, number>();
+  for (const d of drums) {
+    const k = `${d.sampleId}@${d.note}`;
+    const prev = drumKey.get(k);
+    if (prev !== undefined) {
+      warnings.push(`drum ${d.index} ${d.name} is identical to drum ${prev} (${k})`);
+    } else {
+      drumKey.set(k, d.index);
+    }
+  }
 
   // ---- 5. THE GATE: loop-seam continuity on every looped sample the bank ships --------
   //
