@@ -7,7 +7,13 @@ envelopes, a 33-algorithm effects section, 8-timbre Combinations, and (optionall
 sequencer. Korg's official factory bank has been decoded, so the 100 factory programs and 100
 combinations are **importable, not reconstructable**.
 
-**Status: planning complete, no code yet.** Repo: `github.com/TxVibeCoder/BorgM1` (empty).
+**Status: Phase 0 complete** — forked, gutted, scaffolded. `npm run dev` serves an empty shell
+on port 5184; 169 unit tests, typecheck and build all green. Phase 1 (the sample pipeline) is
+next. Repo: `github.com/TxVibeCoder/BorgM1`.
+
+```bash
+npm install && npm run dev
+```
 
 ## Start here
 
