@@ -28,6 +28,12 @@ import {
   type EffectsState,
 } from '../../data/effectParams';
 import { coalesceProgramParams, defaultProgramParams } from '../../data/programParams';
+import {
+  coalesceCombiParams,
+  COMBI_TYPES,
+  defaultCombiParams,
+  TIMBRE_COUNT,
+} from '../../data/combiParams';
 
 /** Tree schema version. Bump only on a BREAKING shape change; additive slices don't. */
 export const STATE_VERSION = 1;
@@ -84,31 +90,30 @@ export interface ProgramState {
   effects: EffectsState;
 }
 
-/** One Combination timbre. Phase 5 fills this out; the shell pins the shape. */
+/**
+ * One Combination. `params` is the 124-byte record's parameter bag keyed by ControlDef id —
+ * the same contract `program.params` uses, so the SysEx codec, the coalescer and Phase 6's
+ * importer are all shared.
+ *
+ * A COMBINATION HAS ITS OWN EFFECT SECTION. Bytes 11-35 of its record are the same 25-byte
+ * block as a program's 38-62, so the store's effect methods act on whichever of the two the
+ * current mode selects — see `currentEffects`.
+ */
 export interface CombiState {
   name: string;
   slot: string | null;
-  /** Phase 5: SINGLE | LAYER | SPLIT | VELOCITY SWITCH | MULTI — five real types. */
-  type: string;
-  timbres: TimbreState[];
+  params: Record<string, number | string>;
+  effects: EffectsState;
+  /**
+   * SOLO, one flag per timbre. **UI only, and deliberately outside the params bag**: the
+   * hardware has TIMBRE ON/OFF (which is MUTE, and IS in the record at byte+10 bit4) but no
+   * solo at all. Solo is the plugin's addition and a transient performance control, so it
+   * must not travel in a saved combination or it would silence seven timbres on load.
+   */
+  solo: boolean[];
 }
 
-export interface TimbreState {
-  /** Program slot this timbre plays, or null for an empty timbre. */
-  program: string | null;
-  /** MIDI channel 0..15. */
-  channel: number;
-  /** Inclusive key window [low, high], 0..127. */
-  keyLow: number;
-  keyHigh: number;
-  /** Inclusive velocity window [low, high], 1..127. */
-  velLow: number;
-  velHigh: number;
-  muted: boolean;
-  solo: boolean;
-}
-
-export const TIMBRE_COUNT = 8;
+export { TIMBRE_COUNT };
 
 export interface M1State {
   version: number;
@@ -143,25 +148,13 @@ export function defaultProgramState(): ProgramState {
   };
 }
 
-export function defaultTimbre(): TimbreState {
-  return {
-    program: null,
-    channel: 0,
-    keyLow: 0,
-    keyHigh: 127,
-    velLow: 1,
-    velHigh: 127,
-    muted: false,
-    solo: false,
-  };
-}
-
 export function defaultCombiState(): CombiState {
   return {
     name: 'INIT COMBI',
     slot: null,
-    type: 'SINGLE',
-    timbres: Array.from({ length: TIMBRE_COUNT }, defaultTimbre),
+    params: defaultCombiParams(),
+    effects: defaultEffectsState(),
+    solo: Array.from({ length: TIMBRE_COUNT }, () => false),
   };
 }
 
@@ -245,32 +238,27 @@ export function coalesceProgramState(raw: Partial<ProgramState> | undefined): Pr
   };
 }
 
-export function coalesceTimbre(raw: Partial<TimbreState> | undefined): TimbreState {
-  const keyLow = int(raw?.keyLow, 0, 0, 127);
-  const keyHigh = int(raw?.keyHigh, 127, 0, 127);
-  const velLow = int(raw?.velLow, 1, 1, 127);
-  const velHigh = int(raw?.velHigh, 127, 1, 127);
-  return {
-    program: nullableStr(raw?.program),
-    channel: int(raw?.channel, 0, 0, 15),
-    // An inverted window would silence the timbre with no visible cause; order it.
-    keyLow: Math.min(keyLow, keyHigh),
-    keyHigh: Math.max(keyLow, keyHigh),
-    velLow: Math.min(velLow, velHigh),
-    velHigh: Math.max(velLow, velHigh),
-    muted: bool(raw?.muted),
-    solo: bool(raw?.solo),
-  };
-}
-
+/**
+ * Heal the combination.
+ *
+ * AN INVERTED WINDOW IS NO LONGER ORDERED, AND THAT REVERSES A PHASE 0 DECISION. The Phase 0
+ * shell ordered `low > high` on the reasoning that an inverted window "silences a timbre with
+ * no visible cause". Phase 5 measured the hardware and the reasoning does not survive: an
+ * empty velocity window is Korg's own MECHANISM, not a mistake. The manual states it outright
+ * — "If the Velocity SW point is set to 1, the soft Program will not sound" (p.70), which is
+ * exactly `velTop = 0 < velBottom = 1` — and the factory bank writes `VEL TOP = 0` on all 174
+ * unused timbres of its non-MULTI combinations. Ordering those would make every unused timbre
+ * sound. The real concern behind the old decision is answered instead by the timbre strip,
+ * which greys a row whose window can never match, so the cause IS visible.
+ */
 export function coalesceCombiState(raw: Partial<CombiState> | undefined): CombiState {
-  const src = Array.isArray(raw?.timbres) ? raw.timbres : [];
+  const solo = Array.isArray(raw?.solo) ? raw.solo : [];
   return {
     name: str(raw?.name, 'INIT COMBI'),
     slot: nullableStr(raw?.slot),
-    type: str(raw?.type, 'SINGLE'),
-    // Always exactly TIMBRE_COUNT — a short or ragged array is padded with defaults.
-    timbres: Array.from({ length: TIMBRE_COUNT }, (_, i) => coalesceTimbre(src[i])),
+    params: coalesceCombiParams(raw?.params),
+    effects: coalesceEffectsState(raw?.effects),
+    solo: Array.from({ length: TIMBRE_COUNT }, (_, i) => bool(solo[i])),
   };
 }
 
@@ -339,10 +327,83 @@ export class M1Store {
     this.emit();
   }
 
+  // ---- combinations -------------------------------------------------------------------
+
+  setCombiParam(id: string, value: number | string): void {
+    if (typeof value === 'number' && !Number.isFinite(value)) return;
+    this.state.combi.params[id] = value;
+    this.emit();
+  }
+
+  /** Replace several parameters at once — what the derived split-point writers need. */
+  setCombiParams(patch: Record<string, number | string>): void {
+    for (const [id, value] of Object.entries(patch)) {
+      if (typeof value === 'number' && !Number.isFinite(value)) continue;
+      this.state.combi.params[id] = value;
+    }
+    this.emit();
+  }
+
+  setCombiName(name: string): void {
+    this.state.combi.name = name.slice(0, 10);
+    this.emit();
+  }
+
+  setCombiType(type: string): void {
+    if (!(COMBI_TYPES as readonly string[]).includes(type)) return;
+    this.state.combi.params['COMBI_TYPE'] = type;
+    this.emit();
+  }
+
+  /** SOLO is UI-only and transient — see `CombiState.solo`. */
+  setTimbreSolo(timbre: number, on: boolean): void {
+    if (timbre < 0 || timbre >= TIMBRE_COUNT) return;
+    this.state.combi.solo[timbre] = on === true;
+    this.emit();
+  }
+
+  getCombiParam(id: string): number | string | undefined {
+    return this.state.combi.params[id];
+  }
+
+  get combiType(): string {
+    return String(this.state.combi.params['COMBI_TYPE'] ?? 'SINGLE');
+  }
+
+  get combiName(): string {
+    return this.state.combi.name;
+  }
+
+  /**
+   * Direct scalar reader, NOT `getState().mode`. Same reasoning as `getProgramParam`: the
+   * deep copy through the JSON codec returns a fresh tree on every call, so a snapshot taken
+   * that way never compares equal and re-renders the whole panel every frame.
+   */
+  get mode(): Mode {
+    return this.state.mode;
+  }
+
+  getTimbreSolo(timbre: number): boolean {
+    return this.state.combi.solo[timbre] === true;
+  }
+
+  get anySolo(): boolean {
+    return this.state.combi.solo.some(Boolean);
+  }
+
   // ---- effects ----------------------------------------------------------------------
   //
-  // Kept here rather than in the params bag for the reason ProgramState.effects documents:
-  // a slot's parameter set depends on its algorithm.
+  // Kept out of the params bags for the reason ProgramState.effects documents: a slot's
+  // parameter set depends on its algorithm.
+  //
+  // THE EFFECT SECTION BELONGS TO WHICHEVER MODE IS CURRENT. A Program carries one at record
+  // bytes 38-62 and a Combination carries its own at 11-35 — the same 25-byte block, edited
+  // on the same page. Resolving it by mode here is what lets the whole FX panel serve both
+  // without knowing which it is looking at.
+
+  private currentEffects(): EffectsState {
+    return this.state.mode === 'COMBI' ? this.state.combi.effects : this.state.program.effects;
+  }
 
   /**
    * Select an algorithm for a slot. RESETS that slot's parameters and balances to the
@@ -355,11 +416,12 @@ export class M1Store {
    * route around the panel.
    */
   setEffectType(slot: 1 | 2, type: number): boolean {
-    const other = this.state.program.effects.slots[slot === 1 ? 1 : 0].type;
+    const fx = this.currentEffects();
+    const other = fx.slots[slot === 1 ? 1 : 0].type;
     const t = Math.min(EFFECT_COUNT, Math.max(0, Math.round(type)));
     if (!effectPairAllowed(t, other)) return false;
     const algo = effectAlgorithm(t);
-    this.state.program.effects.slots[slot - 1] = {
+    fx.slots[slot - 1] = {
       type: t,
       balanceA: algo?.defaultBalance[0] ?? 0,
       balanceB: algo?.defaultBalance[1] ?? 0,
@@ -372,7 +434,7 @@ export class M1Store {
   /** Snaps onto the hardware's quantization grid on the way in — see `snapEffectParam`. */
   setEffectParam(slot: 1 | 2, id: string, value: number | string): void {
     if (typeof value === 'number' && !Number.isFinite(value)) return;
-    const s = this.state.program.effects.slots[slot - 1]!;
+    const s = this.currentEffects().slots[slot - 1]!;
     s.params[id] = snapEffectParam(s.type, id, value);
     this.emit();
   }
@@ -380,33 +442,42 @@ export class M1Store {
   /** Wet percent, 0..100. `which` is A or B — for effects 26-33 those are the two halves. */
   setEffectBalance(slot: 1 | 2, which: 'A' | 'B', value: number): void {
     const v = int(value, 0, 0, 100);
-    const s = this.state.program.effects.slots[slot - 1]!;
+    const s = this.currentEffects().slots[slot - 1]!;
     if (which === 'A') s.balanceA = v;
     else s.balanceB = v;
     this.emit();
   }
 
   setEffectRouting(serial: boolean): void {
-    this.state.program.effects.serial = serial === true;
+    this.currentEffects().serial = serial === true;
     this.emit();
   }
 
   setEffectIo(id: 'fx1L' | 'fx1R' | 'fx2L' | 'fx2R', on: boolean): void {
-    this.state.program.effects[id] = on === true;
+    this.currentEffects()[id] = on === true;
+    this.emit();
+  }
+
+  /** Output 3/4 pan: 0 = OFF, 1 = R, 2..100 = ratio, 101 = L. Only a Combination can hear it. */
+  setEffectOutPan(which: 3 | 4, value: number): void {
+    const fx = this.currentEffects();
+    const v = int(value, 0, 0, 101);
+    if (which === 3) fx.out3Pan = v;
+    else fx.out4Pan = v;
     this.emit();
   }
 
   /** Direct reader for `useSyncExternalStore`, same reasoning as `getProgramParam`. */
   getEffectSlot(slot: 1 | 2): EffectSlotState {
-    return this.state.program.effects.slots[slot - 1]!;
+    return this.currentEffects().slots[slot - 1]!;
   }
 
   getEffectParam(slot: 1 | 2, id: string): number | string | undefined {
-    return this.state.program.effects.slots[slot - 1]!.params[id];
+    return this.currentEffects().slots[slot - 1]!.params[id];
   }
 
   get effects(): EffectsState {
-    return this.state.program.effects;
+    return this.currentEffects();
   }
 
   /**

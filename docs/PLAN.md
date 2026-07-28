@@ -10,8 +10,8 @@ plumbing. Estimates are focused sessions (roughly a working day).
 | 2 | Voice engine | ✅ **done** | 2–3 | **Polyphonic playing from the keyboard** |
 | 3 | Program layer + panel UI | ✅ **done** | 2–3 | Every parameter editable and audible |
 | 4 | Effects | ✅ **done** | 3–4 | **First fidelity gate — `I17 Organ 2` by hand** |
-| 5 | Combinations | ◀ **next** | 1.5–2 | 8-timbre splits and velocity switches |
-| 6 | Browser + factory bank | | 1–1.5 | **All 100 factory programs, loadable** |
+| 5 | Combinations | ✅ **done** | 1.5–2 | 8-timbre splits and velocity switches |
+| 6 | Browser + factory bank | ◀ **next** | 1–1.5 | **All 100 factory programs, loadable** |
 | 7 | Sequencer *(decide after 6)* | | 2–3 | 8-track recording and playback |
 
 **Phases 0–6 = ~12–16 sessions and a complete instrument.** Phase 7 is a separate decision.
@@ -19,11 +19,12 @@ plumbing. Estimates are focused sessions (roughly a working day).
 **Where things stand:** the instrument plays 16-voice polyphonic multisamples (8 in DOUBLE) from
 the on-screen keybed and over Web MIDI, with all 100 multisounds selectable, **all 139 program
 parameters editable on a six-page panel and audible in the engine**, and **all 33 effect
-algorithms in a two-slot master section with real routing** — so the output is now stereo. The
-header also carries a **RECORD** control (WAV lossless or WEBM), wired after Phase 4 closed:
-the recorder came over with the Phase 0 fork and had never had a switch. 908 unit tests,
-typecheck, build and bank build all clean. What is *not* built yet: Combinations and the
-browser.
+algorithms in a two-slot master section with real routing** — so the output is stereo. It is now
+also a workstation: **five Combination types, eight timbres against one 16-slot pool, and the
+14-position panpot that reaches effect buses C and D** — the half of the effect matrix a Program
+cannot get to. The header carries a **RECORD** control (WAV lossless or WEBM). 1070 unit tests
+plus a Playwright layout audit, typecheck, build and bank build all clean. What is *not* built
+yet: the browser and the factory bank import.
 
 Every phase's decisions are recorded dated in `DECISIONS.md`; the notes below are the plan as
 written, kept intact so the plan and its outcome can be compared.
@@ -327,6 +328,40 @@ with slider, `PAN` with rotary, `OUT` dropdown, and a green edge bar marking the
 
 **Done when:** an 8-timbre combi plays with working splits and velocity switches, and voices
 steal sensibly under load.
+
+**Outcome.** All done, and measured in the running app rather than only in tests. 1070 unit
+tests plus a rebuilt Playwright layout audit; typecheck, build and bank build clean.
+
+The table came off Owner's Manual **p.128 (TABLE 2)**, cross-checked against **p.131 (TABLE 6)**
+and against Korg's own 100 factory combinations, now histogrammed by `npm run probe:combis`.
+**The round trip is 100/100 byte-exact.** As in Phase 4, checking the spec mattered more than
+finding it — the data corrected the plan and the manual in three places:
+
+- **TABLE 6's footnote `*14` is NOT a byte offset.** Read literally it puts the split point at
+  byte 68; the factory bank shows byte 68 is timbre 3's TIMBRE-OFF bit and the real split point
+  is a **contiguous pair of key windows**. The literal reading would have given every factory
+  SPLIT a split point of E0.
+- **The MIDI filter polarity is NOT inverted.** PLAN.md's warning is real but points one field
+  to the left: the four CONTROL FILTER bits are `0:DIS, 1:ENA` (set in 96-99% of 800 factory
+  timbres), and the inverted one is TIMBRE ON/OFF in the next byte.
+- **`TIMBRE.INST` bit7 is not the drum-kit flag.** Set on 2 of 800 timbres, zero overlap with
+  the 11 that point at a drum program. Carried verbatim, not modelled.
+
+The allocator needed exactly one new mechanism, and not the one this plan predicted: the
+16-slot pool needed nothing, but the **same-note-first rule needed a timbre term** — Korg puts
+all 800 factory timbres on channel 1, so without it every LAYER collapsed to one sound.
+
+**The panpot law was settled by measuring, after arguing got nowhere.** A sum-preserving law
+made a SINGLE combination exactly 6 dB quieter than the same program in Program mode; the
+manual says Program mode *is* 5:5, so the centre must be unity. The law is now ratio-preserving
+and peak-normalised, verified at ratio 1.010 against Program mode and 0.111 for `9:1`.
+
+Measured with L/R balance as the detector — after a peak-bin pitch read reported the 1st and
+3rd harmonics for two notes an octave apart, which is the fourth time a weak metric has given a
+confidently wrong answer here. SPLIT and VELOCITY SWITCH switch exactly at their boundaries,
+LAYER sums both timbres, 24 notes into the 16-slot pool stay finite and return to exact
+silence, and a timbre on C+D reaches effect 2 in PARALLEL at correlation 0.868 — silent with
+the Output 3/4 pans OFF, which is the hardware.
 
 ---
 

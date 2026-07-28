@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { defaultCombiParams } from '../../data/combiParams';
 import { defaultProgramParams, PROGRAM_PARAMS } from '../../data/programParams';
 import {
   coalesceCombiState,
@@ -20,7 +21,6 @@ import {
   coalesceMasterState,
   coalesceMode,
   coalesceProgramState,
-  coalesceTimbre,
   defaultCombiState,
   defaultExtensionsState,
   defaultM1State,
@@ -68,8 +68,8 @@ describe('state round-trip', () => {
     expect(snapshot.master.volume).toBe(0.8);
     expect(snapshot.program.params['VDF_CUTOFF']).toBeUndefined();
     // and mutating the snapshot does not reach back the other way
-    snapshot.combi.timbres[0]!.channel = 9;
-    expect(store.getState().combi.timbres[0]!.channel).toBe(0);
+    snapshot.combi.params['T1_CHANNEL'] = 9;
+    expect(store.getState().combi.params['T1_CHANNEL']).toBe(1);
   });
 
   it('round-trips a fully populated combi', () => {
@@ -77,20 +77,36 @@ describe('state round-trip', () => {
     const s = store.getState();
     s.mode = 'COMBI';
     s.combi.name = 'Ensemble 2';
-    s.combi.type = 'MULTI';
-    for (let i = 0; i < TIMBRE_COUNT; i++) {
-      const t = s.combi.timbres[i]!;
-      t.program = `I${String(i).padStart(2, '0')}`;
-      t.channel = i;
-      t.keyLow = i * 8;
-      t.keyHigh = 60 + i;
-      t.velLow = 1 + i;
-      t.velHigh = 100 + i;
-      t.muted = i % 2 === 0;
+    s.combi.params['COMBI_TYPE'] = 'MULTI';
+    for (let i = 1; i <= TIMBRE_COUNT; i++) {
+      s.combi.params[`T${i}_PROGRAM`] = `I${String(i - 1).padStart(2, '0')}`;
+      s.combi.params[`T${i}_CHANNEL`] = i;
+      s.combi.params[`T${i}_KEY_BOTTOM`] = (i - 1) * 8;
+      s.combi.params[`T${i}_KEY_TOP`] = 60 + i;
+      s.combi.params[`T${i}_VEL_BOTTOM`] = i;
+      s.combi.params[`T${i}_VEL_TOP`] = 100 + i;
+      s.combi.params[`T${i}_PAN`] = i % 2 === 0 ? 'C+D' : '5:5';
+      s.combi.params[`T${i}_TIMBRE_OFF`] = i % 3 === 0 ? 'OFF' : 'ON';
+      s.combi.solo[i - 1] = i === 2;
     }
     store.setState(s);
     expect(store.getState()).toEqual(s);
     expect(JSON.parse(JSON.stringify(store.getState()))).toEqual(s);
+  });
+
+  /**
+   * SOLO is UI-only and must not survive into the saved record, but it DOES have to survive a
+   * state round trip — it lives in the tree, just not in the 124 bytes.
+   */
+  it('keeps SOLO in the tree as exactly eight booleans', () => {
+    expect(defaultCombiState().solo).toEqual(Array(TIMBRE_COUNT).fill(false));
+    expect(coalesceCombiState({ solo: [true] } as Partial<M1State['combi']>).solo).toEqual([
+      true,
+      ...Array(TIMBRE_COUNT - 1).fill(false),
+    ]);
+    expect(coalesceCombiState({ solo: 'yes' } as unknown as Partial<M1State['combi']>).solo).toEqual(
+      Array(TIMBRE_COUNT).fill(false),
+    );
   });
 
   it('a non-finite parameter value never enters the tree', () => {
@@ -204,40 +220,52 @@ describe('coalesce', () => {
     expect(coalesceProgramState(badSlot).slot).toBeNull();
   });
 
-  it('coalesceCombiState always yields exactly 8 timbres', () => {
-    expect(coalesceCombiState(undefined).timbres).toHaveLength(TIMBRE_COUNT);
-    expect(coalesceCombiState({ timbres: [] }).timbres).toHaveLength(TIMBRE_COUNT);
-    const short = coalesceCombiState({ timbres: [{ channel: 4 }] } as unknown as Parameters<
-      typeof coalesceCombiState
-    >[0]);
-    expect(short.timbres).toHaveLength(TIMBRE_COUNT);
-    expect(short.timbres[0]!.channel).toBe(4);
-    expect(short.timbres[7]).toEqual(defaultCombiState().timbres[7]);
+  it('coalesceCombiState always yields all eight timbres’ parameters', () => {
+    const healed = coalesceCombiState(undefined);
+    expect(healed.params).toEqual(defaultCombiParams());
+    for (let t = 1; t <= TIMBRE_COUNT; t++) {
+      expect(healed.params[`T${t}_PROGRAM`]).toBeDefined();
+      expect(healed.params[`T${t}_CHANNEL`]).toBeDefined();
+    }
+    const partial = coalesceCombiState({ params: { T1_CHANNEL: 5 } });
+    expect(partial.params['T1_CHANNEL']).toBe(5);
+    expect(partial.params['T8_CHANNEL']).toBe(defaultCombiParams()['T8_CHANNEL']);
   });
 
-  it('coalesceTimbre clamps windows and ORDERS an inverted one', () => {
-    // An inverted window silences the timbre with no visible cause — the single most
-    // confusing way for a Combination to "not work". Order it instead of trusting it.
-    const t = coalesceTimbre({ keyLow: 100, keyHigh: 20, velLow: 120, velHigh: 30 });
-    expect(t.keyLow).toBe(20);
-    expect(t.keyHigh).toBe(100);
-    expect(t.velLow).toBe(30);
-    expect(t.velHigh).toBe(120);
-  });
-
-  it('coalesceTimbre clamps out-of-range keys, velocities and channels', () => {
-    const t = coalesceTimbre({
-      channel: 99,
-      keyLow: -5,
-      keyHigh: 999,
-      velLow: 0,
-      velHigh: 999,
+  /**
+   * PHASE 5 REVERSES A PHASE 0 DECISION, WITH EVIDENCE. The shell ordered an inverted window
+   * because it "silences a timbre with no visible cause". Measured against the hardware, an
+   * empty window is Korg's OWN mechanism: manual p.70 says a velocity switch point of 1 must
+   * silence the soft program, which is `velTop = 0 < velBottom = 1`, and the factory bank
+   * writes exactly that on all 174 unused timbres of its non-MULTI combinations. Ordering
+   * them would make every unused timbre sound.
+   */
+  it('does NOT order an inverted window — an empty one is the hardware’s own mechanism', () => {
+    const healed = coalesceCombiState({
+      params: { T1_KEY_BOTTOM: 100, T1_KEY_TOP: 20, T1_VEL_BOTTOM: 120, T1_VEL_TOP: 0 },
     });
-    expect(t.channel).toBe(15);
-    expect(t.keyLow).toBe(0);
-    expect(t.keyHigh).toBe(127);
-    expect(t.velLow).toBe(1); // velocity 0 is note-off, never a window bound
-    expect(t.velHigh).toBe(127);
+    expect(healed.params['T1_KEY_BOTTOM']).toBe(100);
+    expect(healed.params['T1_KEY_TOP']).toBe(20);
+    expect(healed.params['T1_VEL_BOTTOM']).toBe(120);
+    expect(healed.params['T1_VEL_TOP']).toBe(0);
+  });
+
+  it('clamps out-of-range keys, velocities and channels', () => {
+    const healed = coalesceCombiState({
+      params: {
+        T1_CHANNEL: 99,
+        T1_KEY_BOTTOM: -5,
+        T1_KEY_TOP: 999,
+        T1_VEL_BOTTOM: 0,
+        T1_VEL_TOP: 999,
+      },
+    });
+    expect(healed.params['T1_CHANNEL']).toBe(16);
+    expect(healed.params['T1_KEY_BOTTOM']).toBe(0);
+    expect(healed.params['T1_KEY_TOP']).toBe(127);
+    // VEL BOTTOM's range is 01~7F: velocity 0 is note-off, never a window bound.
+    expect(healed.params['T1_VEL_BOTTOM']).toBe(1);
+    expect(healed.params['T1_VEL_TOP']).toBe(127);
   });
 
   it('a hand-mangled tree still coalesces to something that round-trips', () => {
@@ -248,7 +276,7 @@ describe('coalesce', () => {
       keyboard: { octave: 'huge' },
       extensions: 'on',
       program: { params: 7 },
-      combi: { timbres: 'none' },
+      combi: { params: 'none', solo: 'none' },
     } as unknown as Partial<M1State>;
     const healed = coalesceM1State(mangled);
     expect(healed).toEqual(defaultM1State());

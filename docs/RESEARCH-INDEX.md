@@ -21,12 +21,14 @@ not a dependency — the build does not read it.
 | Cutoff keyboard tracking: 0 means 100%, confirmed verbatim | `dsp/lowpassCore.ts` | 3 |
 | The 25-byte effect block, all 33 algorithms and their quantization grids | `data/effectParams.ts` | 4 |
 | The effect NAMES, per-algorithm DEFAULTS and the asterisk pairing rule | `data/effectParams.ts` | 4 |
+| The 124-byte Combination table, all 5 types and 8 timbres | `data/combiParams.ts` | 5 |
+| The effect placement topology and what Output 3/4 Pan actually do (pp.36-37) | `dsp/fx/effectChainCore.ts` | 5 |
+| Split / velocity-switch semantics and the ENA/DIS filter polarity (pp.65-76) | `data/combiParams.ts` | 5 |
 
 **Still to extract**, in the phase that needs it:
 
 | Not yet extracted | Needed by |
 |---|---|
-| The 124-byte Combination table | Phase 5 |
 | `preload/final.py` — the 100 factory programs and 100 combinations | Phase 6 |
 
 ## Where the tables actually are — read the IMAGES, not the OCR
@@ -39,10 +41,16 @@ transcribed p.127 from the image in one pass after the OCR wasted a search.
 | Page | Table | What it is | Status |
 |---|---|---|---|
 | `pg/p127.png` | **TABLE 1** | **The 143-byte Program Parameter table.** Plus notes *1 (the EG-time SW & POLARITY bit layout), *2 (osc modes) and *3 (MG waveforms) | ✅ extracted, Phase 3 |
-| `pg/p128.png` | TABLES 2–4 | Combination (124 bytes), Global, Sequencer Control Data | Phases 5, 7 |
+| `pg/p128.png` | TABLES 2–4 | **The 124-byte Combination table**, Global, Sequencer Control Data | ✅ extracted, Phase 5 (Global/Sequencer still open) |
 | `pg/p129.png` | `*11` | **The 25-byte effect block and all 33 algorithms**, with their quantization grids | Phase 4 |
 | `pg/p130.png` | TABLE 5 | Program parameter **page/position → offset**. The independent cross-check on TABLE 1, and the hardware's own edit-page grouping | ✅ used, Phase 3 |
-| `pages/b131.png` | TABLE 6 | The same, for Combinations. Note `pg/` stops at p130 — this one is only in `pages/` | Phase 5 |
+| `pages/b131.png` | TABLE 6 | The same, for Combinations. Note `pg/` stops at p130 — this one is only in `pages/` | ✅ used, Phase 5 — **but see the warning below** |
+
+> **TABLE 6's footnotes `*14` and `*15` are NOT byte offsets.** Every other cell in that table
+> is one, and the footnotes print as the bare numbers `68` and `70`, so they read as offsets.
+> They are not: byte 68 is timbre 3's TIMBRE-OFF bit, and the split point is actually a pair of
+> contiguous key windows. Korg's own factory bank settles it — see `probe:combis` and the
+> Phase 5 entry in `DECISIONS.md`. The numbers are almost certainly manual PAGE references.
 
 The Edit Program Mode pages (`png/p021.png`–`png/p036.png`, manual pp.20–35) carry the
 per-parameter semantics and the display names. Note the filenames are offset by one from the

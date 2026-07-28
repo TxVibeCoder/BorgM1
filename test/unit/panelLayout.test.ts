@@ -9,6 +9,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import {
+  COMBI_CONTROL_DEFS,
+  COMBI_PARAMS,
+  combiParam,
+  TIMBRE_COUNT,
+} from '../../data/combiParams';
 import { EFFECT_ALGORITHMS, effectAlgorithm, toEffectControlDef } from '../../data/effectParams';
 import { isOsc2Param, PROGRAM_PARAMS, programParam } from '../../data/programParams';
 import { validateControlDefs, type ControlDef } from '../../data/schema';
@@ -16,6 +22,9 @@ import {
   CELL,
   cellAt,
   columnsFor,
+  COMBI_PAGES,
+  COMBI_PAGE_LAYOUTS,
+  COMBI_PAGE_SECTIONS,
   flowSections,
   PAGE_LAYOUTS,
   PAGES,
@@ -24,6 +33,8 @@ import {
   REGIONS,
   rowsFor,
   sectionHeight,
+  TIMBRE_ROW,
+  TIMBRE_ROW_W,
   type ParamSection,
 } from '../../src/ui/panel/layout';
 import { STAGE } from '../../src/ui/stage';
@@ -175,6 +186,125 @@ describe('panel layout — the FX page', () => {
       expect(name.length, `type ${t}`).toBeGreaterThan(0);
       expect(name.length, `type ${t} name "${name}" overflows the field`).toBeLessThanOrEqual(16);
     }
+  });
+});
+
+/**
+ * The Combination panel's counterpart to the coverage test above, and the same failure is
+ * being guarded against: a parameter that exists in the 124-byte record, reaches the engine,
+ * and is on no page. The strip covers four fields per row; the centre and right columns cover
+ * the rest, and between them they have to cover all of it.
+ */
+describe('panel layout — the Combination pages', () => {
+  /** Fields the 8-row strip renders directly, per UI-SPEC §3. */
+  const STRIP_FIELDS = ['PROGRAM', 'LEVEL', 'PAN', 'TIMBRE_OFF'];
+  /**
+   * Fields with no control anywhere, each for a stated reason. Kept short and explicit — a
+   * long list is how "every parameter is editable" quietly stops being true.
+   */
+  const NOT_EDITABLE: Record<string, string> = {
+    PAN_SOURCE: 'an honest unknown the factory bank refutes; carried verbatim, not modelled',
+    FILTER_RESERVED: 'undocumented bits, carried verbatim so an import is lossless',
+  };
+
+  function renderedCombiFields(): Set<string> {
+    const ids = new Set<string>(STRIP_FIELDS);
+    for (const s of COMBI_PAGE_SECTIONS) for (const p of s.params) ids.add(p);
+    return ids;
+  }
+
+  it('puts every combination parameter somewhere a user can reach it', () => {
+    const rendered = renderedCombiFields();
+    const missing = COMBI_PARAMS.filter((p) => {
+      const field = p.id.replace(/^T\d_/, '');
+      return !rendered.has(field) && !(field in NOT_EDITABLE);
+    }).map((p) => p.id);
+    expect(missing, `parameters on no page: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('references only real parameters', () => {
+    for (const s of COMBI_PAGE_SECTIONS) {
+      for (const p of s.params) {
+        const id = s.global ? p : `T1_${p}`;
+        expect(() => combiParam(id), `${s.title}/${p}`).not.toThrow();
+      }
+    }
+  });
+
+  it('never hard-codes a timbre prefix inside a per-timbre section', () => {
+    // The Combination twin of the `1`/`2` rule: a section declares the un-prefixed field once
+    // and binds it to whichever row the strip has selected.
+    for (const s of COMBI_PAGE_SECTIONS) {
+      if (s.global) continue;
+      for (const p of s.params) expect(p, s.title).not.toMatch(/^T\d_/);
+    }
+  });
+
+  it('projects every combination parameter onto a control the panel can render', () => {
+    const errors = validateControlDefs('combi', COMBI_CONTROL_DEFS);
+    expect(errors, errors.join('\n')).toEqual([]);
+  });
+
+  /**
+   * EIGHT ROWS OF SIX CONTROLS IS THE DENSEST SURFACE IN THE INSTRUMENT, and the row's pieces
+   * are hand-placed rather than flowed — so this is the one place a hard-coded coordinate can
+   * still put a control off the end of its row. The rendered-page audit checks the same thing
+   * in pixels; this catches it before the browser is even opened.
+   */
+  it('fits one timbre row inside the strip, with every piece in order', () => {
+    const R = TIMBRE_ROW;
+    // The strip pads its rows by 6px on each side.
+    const rowW = REGIONS.left.w - 12;
+    expect(TIMBRE_ROW_W, `row needs ${TIMBRE_ROW_W}px of ${rowW}`).toBeLessThanOrEqual(rowW);
+
+    const pieces: [string, number, number][] = [
+      ['buttons', R.buttonsX, 4 * R.buttonW + 3 * R.buttonGap],
+      ['name', R.nameX, R.nameW],
+      ['level', R.levelX, R.levelW],
+      ['pan', R.panX, R.panW],
+      ['out', R.outX, R.outW],
+    ];
+    let prevRight = R.numX;
+    for (const [name, x, w] of pieces) {
+      expect(x, `${name} overlaps what precedes it`).toBeGreaterThanOrEqual(prevRight);
+      prevRight = x + w;
+    }
+    expect(prevRight).toBeLessThanOrEqual(rowW);
+  });
+
+  it('stacks all eight rows inside the left column', () => {
+    const needed = 12 + TIMBRE_COUNT * (TIMBRE_ROW.h + TIMBRE_ROW.gap) - TIMBRE_ROW.gap;
+    expect(needed, `${TIMBRE_COUNT} rows need ${needed}px of ${REGIONS.left.h}`).toBeLessThanOrEqual(
+      REGIONS.left.h,
+    );
+  });
+
+  it('flows the Combination sections inside their columns', () => {
+    for (const layout of Object.values(COMBI_PAGE_LAYOUTS)) {
+      for (const [sections, region] of [
+        [layout.centre, REGIONS.centre],
+        [layout.right, REGIONS.right],
+      ] as const) {
+        // The derived SPLIT / VELOCITY SWITCH point adds one cell to whichever section hosts
+        // it, so the flow has to fit with it present as well as absent.
+        const withExtra = sections.map((s) => ({
+          title: s.title,
+          params: s.hostsDerivedPoint ? [...s.params, 'DERIVED'] : s.params,
+          columns: s.columns,
+        }));
+        const boxes = flowSections(withExtra, region);
+        let prevBottom = region.y - 1;
+        for (const b of boxes) {
+          expect(b.y, layout.centre[0]?.title).toBeGreaterThan(prevBottom);
+          prevBottom = b.y + b.h;
+        }
+        expect(prevBottom).toBeLessThanOrEqual(region.y + region.h + 0.001);
+      }
+    }
+  });
+
+  it('has a TIMBRE page and an FX page, and nothing else', () => {
+    expect([...COMBI_PAGES]).toEqual(['TIMBRE', 'FX']);
   });
 });
 

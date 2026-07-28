@@ -20,16 +20,18 @@
 
 import type { EffectsState } from '../../../data/effectParams';
 import { EffectChain, MAX_FX_BLOCK } from '../dsp/fx/effectChainCore';
-import { VoiceEngine, type OscConfig } from '../voice/voiceEngineCore';
-import type { SerializedOsc, SerializedProgram } from '../voiceMessages';
+import { VoiceEngine, type OscConfig, type TimbreConfig } from '../voice/voiceEngineCore';
+import type { SerializedOsc, SerializedProgram, SerializedTimbre } from '../voiceMessages';
 
 type InMessage =
   | { type: 'bank'; pcm: Float32Array }
   | { type: 'program'; program: SerializedProgram }
+  | { type: 'timbres'; timbres: SerializedTimbre[] }
   | { type: 'effects'; effects: EffectsState }
   | { type: 'dacModel'; on: boolean }
-  | { type: 'noteOn'; note: number; velocity: number }
-  | { type: 'noteOff'; note: number }
+  | { type: 'globalChannel'; channel: number }
+  | { type: 'noteOn'; note: number; velocity: number; channel?: number }
+  | { type: 'noteOff'; note: number; channel?: number }
   | { type: 'sustain'; down: boolean }
   | { type: 'joystick'; x: number; y: number }
   | { type: 'aftertouch'; value: number }
@@ -53,6 +55,18 @@ class VoiceProcessor extends AudioWorkletProcessor {
   private pcm: Float32Array | null = null;
   /** Set false by the guard below if the engine ever throws, so it fails silent, not dead. */
   private healthy = true;
+  /**
+   * Effect buses C and D. Buses A and B are the output buffers themselves, so only these two
+   * need storage. Sized generously in the constructor and grown only if the host hands us a
+   * bigger quantum than that — never per block, per the no-allocation rule.
+   */
+  private busC = new Float32Array(2048);
+  private busD = new Float32Array(2048);
+
+  private growBuses(count: number): void {
+    this.busC = new Float32Array(count);
+    this.busD = new Float32Array(count);
+  }
 
   constructor() {
     super();
@@ -86,6 +100,14 @@ class VoiceProcessor extends AudioWorkletProcessor {
     };
   }
 
+  private hydrateProgram(p: SerializedProgram): Parameters<VoiceEngine['setProgram']>[0] {
+    return { ...p, osc: [this.hydrate(p.osc[0]), this.hydrate(p.osc[1])] };
+  }
+
+  private hydrateTimbre(t: SerializedTimbre): TimbreConfig {
+    return { ...t, program: this.hydrateProgram(t.program) };
+  }
+
   private onMessage(msg: InMessage): void {
     try {
       switch (msg.type) {
@@ -93,16 +115,19 @@ class VoiceProcessor extends AudioWorkletProcessor {
           this.pcm = msg.pcm;
           break;
         case 'program':
-          this.engine.setProgram({
-            ...msg.program,
-            osc: [this.hydrate(msg.program.osc[0]), this.hydrate(msg.program.osc[1])],
-          });
+          this.engine.setProgram(this.hydrateProgram(msg.program));
+          break;
+        case 'timbres':
+          this.engine.setTimbres(msg.timbres.map((t) => this.hydrateTimbre(t)));
           break;
         case 'effects':
           this.effects.set(msg.effects);
           break;
         case 'dacModel':
           this.effects.setDacModel(msg.on);
+          break;
+        case 'globalChannel':
+          this.engine.setGlobalChannel(msg.channel);
           break;
         case 'joystick':
           this.engine.setJoystick(msg.x, msg.y);
@@ -111,10 +136,10 @@ class VoiceProcessor extends AudioWorkletProcessor {
           this.engine.setAftertouch(msg.value);
           break;
         case 'noteOn':
-          this.engine.noteOn(msg.note, msg.velocity);
+          this.engine.noteOn(msg.note, msg.velocity, msg.channel ?? 0);
           break;
         case 'noteOff':
-          this.engine.noteOff(msg.note);
+          this.engine.noteOff(msg.note, msg.channel ?? 0);
           break;
         case 'sustain':
           this.engine.setSustain(msg.down);
@@ -148,13 +173,23 @@ class VoiceProcessor extends AudioWorkletProcessor {
     }
 
     try {
-      this.engine.render(l, r, count);
+      // FOUR buses out of the voice engine, two of them scratch: `l`/`r` ARE buses A and B, so
+      // the pair the host hears is written in place exactly as before, and C/D only exist for
+      // the timbres a panpot has sent there.
+      if (count > this.busC.length) this.growBuses(count);
+      this.engine.renderBuses(l, r, this.busC, this.busD, count);
       // The effect section runs on the SUM of every voice, in its own fixed-size chunks.
       // Reading the host's quantum here would be the same mistake CLAUDE.md forbids on the
       // control path — and the chain's scratch buffers are sized once, at MAX_FX_BLOCK.
       for (let done = 0; done < count; done += MAX_FX_BLOCK) {
         const chunk = Math.min(MAX_FX_BLOCK, count - done);
-        this.effects.process(l.subarray(done, done + chunk), r.subarray(done, done + chunk), chunk);
+        this.effects.processBuses(
+          l.subarray(done, done + chunk),
+          r.subarray(done, done + chunk),
+          this.busC.subarray(done, done + chunk),
+          this.busD.subarray(done, done + chunk),
+          chunk,
+        );
       }
     } catch {
       // Silence this block and every one after it, but KEEP RETURNING TRUE. Letting the

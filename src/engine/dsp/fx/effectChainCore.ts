@@ -4,14 +4,22 @@
  * FOUR BUSES AND A 2-EFFECT MATRIX, NOT SENDS (BRIEF.md). The hardware has four inputs
  * (A, B, C, D) and four outputs (1/L, 2/R, 3, 4), and the routing is a single bit:
  *
- *   SERIAL    A,B -> Effect1 -> Effect2 -> 1/L, 2/R      C,D -> 3, 4  (or via Pan into Effect2)
- *   PARALLEL  A,B -> Effect1 ---------->  1/L, 2/R      C,D -> Effect2 -> 3, 4
+ *   SERIAL    A,B -> Effect1 --+-> Effect2 -> 1/L, 2/R     C,D --Pan3/Pan4--+
+ *   PARALLEL  A,B -> Effect1 --+-> 1/L, 2/R                C,D -> Effect2 --Pan3/Pan4--+
+ *
+ * That is manual pp.36-37 verbatim, and it is the page on which Pan 3 and Pan 4 finally make
+ * sense: they are where outputs 3 and 4 sit in the main stereo pair. In SERIAL they carry C
+ * and D into effect 2's input ("The output signals from 3 and 4 can also be mixed with the A
+ * and B inputs to be routed together through Effect 2"); in PARALLEL they carry effect 2's own
+ * output back ("The outputs from 3 and 4 can be mixed with the Effect 1 outputs").
  *
  * PROGRAM MODE CANNOT REACH EFFECT 2 IN PARALLEL, AND THAT IS NOT A BUG. Program mode has no
  * panpot page at all, so a non-drum program is hard-wired 5:5 into A/B — and in PARALLEL the
  * A/B path stops at Effect 1. Switching a Program to PARALLEL therefore SILENCES effect 2
- * entirely. It looks like a fault and it is the hardware. Phase 5's Combinations get a real
- * panpot per timbre and can feed C/D, which is when parallel routing starts earning its keep.
+ * entirely. It looks like a fault and it is the hardware. Phase 5's Combinations have a real
+ * panpot per timbre and DO feed C/D: 68 of Korg's 800 factory combination timbres are panned
+ * to C, C+D or D, and 41 of the 100 combinations set Pan 3 to 101 (hard L) and Pan 4 to 1
+ * (hard R), which is the manual's own recipe for hearing both effects in stereo.
  *
  * `Dry:EFF` IS A CROSSFADE, NOT A SEND. The display reads `60:40`, the two halves sum to 100,
  * and the byte is the EFFECT half — so `out = dry*(1-w) + wet*w`. Worth stating because the
@@ -464,10 +472,16 @@ export class EffectChain {
   private fx2L = true;
   private fx2R = true;
 
+  private out3Pan = 0;
+  private out4Pan = 0;
+
   private readonly midL = new Float32Array(MAX_FX_BLOCK);
   private readonly midR = new Float32Array(MAX_FX_BLOCK);
   private readonly dryL = new Float32Array(MAX_FX_BLOCK);
   private readonly dryR = new Float32Array(MAX_FX_BLOCK);
+  /** Effect 2's own output in PARALLEL, before Pan 3/4 fold it back into the stereo pair. */
+  private readonly cdL = new Float32Array(MAX_FX_BLOCK);
+  private readonly cdR = new Float32Array(MAX_FX_BLOCK);
   private readonly dac: DacQuantizer;
 
   constructor(readonly sampleRate: number) {
@@ -490,6 +504,8 @@ export class EffectChain {
     this.fx1R = state.fx1R;
     this.fx2L = state.fx2L;
     this.fx2R = state.fx2R;
+    this.out3Pan = state.out3Pan;
+    this.out4Pan = state.out4Pan;
   }
 
   /** Turn the 16-bit gain-ranged DAC model on or off. On is the hardware. */
@@ -503,34 +519,100 @@ export class EffectChain {
   }
 
   /**
-   * Process in place. `count` must not exceed MAX_FX_BLOCK — the worklet subdivides.
+   * Process in place, with buses C and D silent. Program mode's whole signal path.
    */
   process(l: Float32Array, r: Float32Array, count: number): void {
+    this.processBuses(l, r, null, null, count);
+  }
+
+  /**
+   * The full four-bus matrix. `a`/`b` carry the result out; `c`/`d` are read-only inputs and
+   * may be null, which is Program mode.
+   *
+   * `count` must not exceed MAX_FX_BLOCK — the worklet subdivides.
+   */
+  processBuses(
+    a: Float32Array,
+    b: Float32Array,
+    c: Float32Array | null,
+    d: Float32Array | null,
+    count: number,
+  ): void {
     const n = Math.min(count, MAX_FX_BLOCK);
     // Keep the untouched input for the per-channel I/O bits, which bypass an effect for one
     // channel rather than muting it.
-    this.dryL.set(l.subarray(0, n));
-    this.dryR.set(r.subarray(0, n));
+    this.dryL.set(a.subarray(0, n));
+    this.dryR.set(b.subarray(0, n));
 
-    this.slot1.process(l, r, this.midL, this.midR, n);
+    this.slot1.process(a, b, this.midL, this.midR, n);
     applyBypass(this.midL, this.dryL, this.fx1L, n);
     applyBypass(this.midR, this.dryR, this.fx1R, n);
 
     if (this.serial) {
-      // SERIAL: A,B -> Effect1 -> Effect2. The only path a Program can take to Effect 2.
+      // SERIAL. Manual p.36: "Inputs A and B send signals to both Effect 1 and Effect 2 and
+      // are output from 1/L and 2/R. Signals from C and D are output through 3 and 4
+      // unprocessed. The output signals from 3 and 4 can also be mixed with the A and B
+      // inputs to be routed together through Effect 2." So C/D SKIP effect 1 and join at
+      // effect 2's input through Pan 3 and Pan 4 — which is how a Combination gets "some
+      // programs through effect 1, all of them through effect 2".
+      mixPanned(this.midL, this.midR, c, this.out3Pan, n);
+      mixPanned(this.midL, this.midR, d, this.out4Pan, n);
       this.dryL.set(this.midL.subarray(0, n));
       this.dryR.set(this.midR.subarray(0, n));
-      this.slot2.process(this.midL, this.midR, l, r, n);
-      applyBypass(l, this.dryL, this.fx2L, n);
-      applyBypass(r, this.dryR, this.fx2R, n);
+      this.slot2.process(this.midL, this.midR, a, b, n);
+      applyBypass(a, this.dryL, this.fx2L, n);
+      applyBypass(b, this.dryR, this.fx2R, n);
     } else {
-      // PARALLEL: A,B stop at Effect 1. Effect 2 is fed by C/D, which a Program has no
-      // panpot page to reach — so in Program mode it contributes nothing. See the header.
-      l.set(this.midL.subarray(0, n));
-      r.set(this.midR.subarray(0, n));
+      // PARALLEL. A,B stop at Effect 1; C,D get Effect 2 and come back through Pan 3/4.
+      // A PROGRAM CANNOT REACH EFFECT 2 HERE and that is the hardware — it has no panpot
+      // page, so C and D are silent and this branch contributes nothing. A COMBINATION can,
+      // and that is the whole point of the panpot. Manual p.37 even gives the recipe:
+      // "stereo out mixed outputs of Effect 1 and Effect 2 can be used by setting Output 3
+      // Pan to 100:0, and Output 4 Pan to 0:100" — which 41 of Korg's 100 factory
+      // combinations do exactly.
+      a.set(this.midL.subarray(0, n));
+      b.set(this.midR.subarray(0, n));
+      if (c || d) {
+        this.cdL.fill(0, 0, n);
+        this.cdR.fill(0, 0, n);
+        if (c) this.cdL.set(c.subarray(0, n));
+        if (d) this.cdR.set(d.subarray(0, n));
+        this.slot2.process(this.cdL, this.cdR, this.midL, this.midR, n);
+        applyBypass(this.midL, this.cdL, this.fx2L, n);
+        applyBypass(this.midR, this.cdR, this.fx2R, n);
+        mixPanned(a, b, this.midL, this.out3Pan, n);
+        mixPanned(a, b, this.midR, this.out4Pan, n);
+      }
     }
 
-    this.dac.process(l, r, n);
+    this.dac.process(a, b, n);
+  }
+}
+
+/**
+ * Fold one of outputs 3 and 4 into the main stereo pair at its pan setting.
+ *
+ * p.129: `0 = OFF, 1 = R, 2..100 = L:R ratio 1:99..99:1, 101 = L`. That whole range collapses
+ * to one expression — `L = (v-1)/100, R = (101-v)/100` — with 0 meaning the output stays on
+ * its own physical jack and never reaches the stereo pair. **OFF is therefore silent in a
+ * browser, and that is authentic**: 37 of Korg's 100 factory combinations set both pans to 0
+ * because they expected a mixer on outputs 3 and 4.
+ */
+function mixPanned(
+  outL: Float32Array,
+  outR: Float32Array,
+  src: Float32Array | null,
+  pan: number,
+  count: number,
+): void {
+  if (!src || pan <= 0) return;
+  const v = Math.min(101, pan);
+  const gl = (v - 1) / 100;
+  const gr = (101 - v) / 100;
+  for (let i = 0; i < count; i++) {
+    const s = src[i]!;
+    outL[i] = outL[i]! + s * gl;
+    outR[i] = outR[i]! + s * gr;
   }
 }
 

@@ -160,6 +160,86 @@ export interface ProgramConfig {
   hold: boolean;
 }
 
+/** Eight timbres. The Combination record has room for exactly this many (manual p.128). */
+export const MAX_TIMBRES = 8;
+
+/**
+ * One Combination timbre: a program, the windows that decide whether it answers a note, and
+ * the panpot that decides which effect bus it lands on.
+ *
+ * ONE PLAY PATH FOR ALL FIVE COMBINATION TYPES. `SINGLE`, `LAYER`, `SPLIT`, `VELOCITY SWITCH`
+ * and MULTI are five real types in the DATA — each has its own edit pages and its own SysEx
+ * meaning — but they are not five behaviours down here. Each resolves to a list of timbres
+ * with effective windows, and the engine then applies one rule: **a timbre sounds when its
+ * channel, its key window and its velocity window all match.** SPLIT is two timbres with
+ * adjacent key windows; VELOCITY SWITCH is two with adjacent velocity windows. Modelling the
+ * types in the engine as well would be the same rule written five times.
+ *
+ * Program mode is the degenerate case: one timbre, every window wide open, and no panpot at
+ * all — see `programModeTimbre`.
+ */
+export interface TimbreConfig {
+  program: ProgramConfig;
+  /** MIDI channel 0..15, or -1 for OMNI. */
+  channel: number;
+  /**
+   * Inclusive windows. **`low > high` is an EMPTY window and the timbre never sounds** — that
+   * is not a defensive clamp, it is the mechanism behind the manual's "If the Velocity SW
+   * point is set to 1, the soft Program will not sound" (p.70).
+   */
+  keyLow: number;
+  keyHigh: number;
+  velLow: number;
+  velHigh: number;
+  /** KEY TRANSPOSE, semitones. Repitches the sample, like OCTAVE and INTERVAL already do. */
+  transpose: number;
+  /** DETUNE, cents. */
+  detune: number;
+  /** OUTPUT LEVEL 0..99 scaled to 0..1. Manual p.65: 99 is unity, 0 is silent. */
+  level: number;
+  /** Panpot gains into the four effect buses, `[A, B, C, D]`. See `panpotGains`. */
+  bus: readonly [number, number, number, number];
+  /** CONTROL FILTER bit1. DIS means the damper pedal does not reach this timbre. */
+  damper: boolean;
+  /** CONTROL FILTER bit2. DIS means aftertouch does not reach this timbre. */
+  afterTouch: boolean;
+  /** CONTROL FILTER bit3. DIS means control changes — the joystick — do not reach it. */
+  controlChange: boolean;
+}
+
+/**
+ * The Program-mode timbre: one program, no windows, and a FIXED panpot.
+ *
+ * Manual p.37: "Programs with the exception of drum kit are input to A and B in a ratio of 5:5
+ * and not input to C and D." Program mode has no panpot page on which to change it, so the
+ * `[1, 1, 0, 0]` below is a wiring rather than a parameter — but it is the SAME value
+ * `panpotGains(PANPOT_CENTRE)` returns, and that is not a coincidence: it is the constraint
+ * that fixed the pan law. See `panpotGains`.
+ */
+export function programModeTimbre(program: ProgramConfig): TimbreConfig {
+  return {
+    program,
+    channel: -1,
+    keyLow: 0,
+    keyHigh: 127,
+    velLow: 1,
+    velHigh: 127,
+    transpose: 0,
+    detune: 0,
+    level: 1,
+    bus: [1, 1, 0, 0],
+    damper: true,
+    afterTouch: true,
+    controlChange: true,
+  };
+}
+
+/** True when this timbre answers this note on this channel. All three must match. */
+export function timbreMatches(t: TimbreConfig, note: number, velocity: number, channel: number): boolean {
+  if (t.channel >= 0 && channel >= 0 && t.channel !== channel) return false;
+  return note >= t.keyLow && note <= t.keyHigh && velocity >= t.velLow && velocity <= t.velHigh;
+}
+
 /** Per-slot render state. Allocated once, reused forever. */
 interface SlotVoice {
   player: PlayerState;
@@ -178,6 +258,8 @@ interface SlotVoice {
   pitchEg: EgConfig;
   note: number;
   velocity: number;
+  /** Which timbre owns this voice. Program mode is always 0. */
+  timbre: number;
   /** Frames remaining in the forced steal fade; 0 when not stealing. */
   fadeFrames: number;
   fadeTotal: number;
@@ -218,6 +300,7 @@ function makeSlotVoice(): SlotVoice {
     pitchEg: makeScaledEg(2),
     note: -1,
     velocity: 0,
+    timbre: 0,
     fadeFrames: 0,
     fadeTotal: 0,
     delayFrames: 0,
@@ -275,21 +358,35 @@ const PITCH_MG_SEMITONES = 2;
 export class VoiceEngine {
   readonly slots: Slot[] = makeSlots(SLOT_COUNT);
   private readonly voices: SlotVoice[] = Array.from({ length: SLOT_COUNT }, makeSlotVoice);
-  private program: ProgramConfig | null = null;
+  /**
+   * The timbres competing for the one 16-slot pool. Program mode holds exactly one; a
+   * Combination holds one per sounding timbre. ALLOCATION IS DYNAMIC AND UNRESERVED across
+   * all of them — nothing is protected and nothing is guaranteed, which is the hardware.
+   */
+  private timbres: TimbreConfig[] = [];
   private sustainDown = false;
   /** Frames rendered since construction. The engine's only clock. */
   private frames = 0;
 
-  /** The two program-level MGs. One phase each, shared by both oscillators. */
-  private readonly pitchMgState: MgState = makeMgState();
-  private readonly cutoffMgState: MgState = makeMgState();
-  private pitchMgValue = 0;
-  private cutoffMgValue = 0;
+  /**
+   * The two program-level MGs, PER TIMBRE. They belong to the program, not to the engine, so
+   * eight timbres carrying eight programs need eight pairs — sharing one pair would lock every
+   * timbre's vibrato to the same phase and rate.
+   */
+  private readonly pitchMgStates: MgState[] = Array.from({ length: MAX_TIMBRES }, makeMgState);
+  private readonly cutoffMgStates: MgState[] = Array.from({ length: MAX_TIMBRES }, makeMgState);
+  private readonly pitchMgValues = new Float64Array(MAX_TIMBRES);
+  private readonly cutoffMgValues = new Float64Array(MAX_TIMBRES);
 
   /** Live controller positions. -1..1 for the joystick axes, 0..1 for aftertouch. */
   private joyX = 0;
   private joyY = 0;
   private aftertouch = 0;
+  /**
+   * The GLOBAL channel. Manual p.73: "Real time performance controls such as joy stick and
+   * after touch affect only the Timbres whose channels are the same as the Global channel."
+   */
+  private globalChannel = 0;
 
   constructor(readonly sampleRate: number) {}
 
@@ -298,8 +395,28 @@ export class VoiceEngine {
     return this.frames / this.sampleRate;
   }
 
+  /** Program mode: one timbre, no windows, no panpot. See `programModeTimbre`. */
   setProgram(p: ProgramConfig): void {
-    this.program = p;
+    this.timbres = [programModeTimbre(p)];
+  }
+
+  /** Combination mode: up to eight timbres against the same pool. */
+  setTimbres(timbres: TimbreConfig[]): void {
+    this.timbres = timbres.slice(0, MAX_TIMBRES);
+  }
+
+  setGlobalChannel(channel: number): void {
+    this.globalChannel = channel;
+  }
+
+  /** The config a sounding slot belongs to, or null if its timbre has since gone away. */
+  private timbreOf(v: SlotVoice): TimbreConfig | null {
+    return this.timbres[v.timbre] ?? null;
+  }
+
+  /** Whether the joystick and aftertouch reach this timbre. */
+  private controllersReach(t: TimbreConfig): boolean {
+    return t.channel < 0 || t.channel === this.globalChannel;
   }
 
   setSustain(down: boolean): void {
@@ -307,10 +424,12 @@ export class VoiceEngine {
       // Lifting the pedal must release the ENVELOPES too, not just re-label the slots.
       // Marking a slot 'released' without starting its release leaves the amp EG parked at
       // sustain forever, so the note holds and its slot is never returned to the pool.
-      for (const i of allocSustainUp(this.slots, 0)) {
-        const v = this.voices[i]!;
-        if (!v.cfg) continue;
-        this.releaseVoice(v);
+      for (let ch = -1; ch < 16; ch++) {
+        for (const i of allocSustainUp(this.slots, ch)) {
+          const v = this.voices[i]!;
+          if (!v.cfg) continue;
+          this.releaseVoice(v);
+        }
       }
     }
     this.sustainDown = down;
@@ -333,34 +452,66 @@ export class VoiceEngine {
     egNoteOff(v.pitch, v.pitchEg);
   }
 
-  noteOn(note: number, velocity: number): void {
-    const p = this.program;
-    if (!p || velocity <= 0) return;
+  /**
+   * A note arrives. EVERY timbre whose channel and windows match it sounds — the windows are
+   * independent and ADDITIVE, so a LAYER is simply two timbres that both matched.
+   *
+   * Allocation runs per matching timbre against the same pool, in timbre order, and a timbre
+   * that cannot get its slots is simply dropped. That reproduces "no per-program limit, but
+   * never more than 16 total" with no per-timbre bookkeeping: the eighth timbre of a dense
+   * chord loses because there is nothing left, which is exactly what the hardware does.
+   */
+  noteOn(note: number, velocity: number, channel = 0): void {
+    if (velocity <= 0) return;
+    for (let t = 0; t < this.timbres.length; t++) {
+      const timbre = this.timbres[t]!;
+      if (!timbreMatches(timbre, note, velocity, channel)) continue;
+      this.noteOnTimbre(t, timbre, note, velocity, channel);
+    }
+  }
+
+  private noteOnTimbre(
+    timbreIndex: number,
+    timbre: TimbreConfig,
+    note: number,
+    velocity: number,
+    channel: number,
+  ): void {
+    const p = timbre.program;
     const need: 1 | 2 = p.oscMode === 'DOUBLE' ? 2 : 1;
 
     // MONO (byte 11 bit0) collapses the program to one sounding note. Release everything
-    // first so the new note takes the pool rather than stacking against it.
+    // first so the new note takes the pool rather than stacking against it — but only THIS
+    // timbre's notes, because MONO is a program parameter and a mono bass timbre must not
+    // silence the pad layered over it.
     if (p.mono) {
       for (let i = 0; i < this.slots.length; i++) {
         const slot = this.slots[i]!;
-        if (slot.state === 'free') continue;
-        allocNoteOff(this.slots, slot.note, 0, false);
+        if (slot.state === 'free' || slot.timbre !== timbreIndex) continue;
+        allocNoteOff(this.slots, slot.note, slot.channel, false);
         const v = this.voices[i]!;
         if (v.cfg) this.releaseVoice(v);
       }
     }
 
-    const r = allocate(this.slots, { slots: need, note, channel: 0, now: this.now });
+    const r = allocate(this.slots, {
+      slots: need,
+      note,
+      channel,
+      timbre: timbreIndex,
+      now: this.now,
+    });
     if (r.indices.length === 0) return;
 
-    // KEY SYNC restarts the shared MG phases. Both MGs are program-level, so this happens
+    // KEY SYNC restarts this timbre's MG phases. Both MGs are program-level, so this happens
     // once per note, not once per claimed slot.
-    mgNoteOn(this.pitchMgState, p.pitchMg);
-    mgNoteOn(this.cutoffMgState, p.cutoffMg);
+    mgNoteOn(this.pitchMgStates[timbreIndex]!, p.pitchMg);
+    mgNoteOn(this.cutoffMgStates[timbreIndex]!, p.cutoffMg);
 
     r.indices.forEach((slotIndex, oscIndex) => {
       const cfg = p.osc[oscIndex] ?? p.osc[0]!;
       const v = this.voices[slotIndex]!;
+      v.timbre = timbreIndex;
       const wasStolen = r.stolen.includes(slotIndex) && v.primed;
 
       const sampleIndex = lookup(cfg.keymap, note, velocity);
@@ -469,16 +620,30 @@ export class VoiceEngine {
       ampTrackingGain(cfg.ampTracking, note, cfg.ampCenterKey);
   }
 
-  noteOff(note: number): void {
-    // HOLD (byte 11 bit1) latches notes on. Ignoring note-off entirely is exactly what the
-    // hardware does; the note ends when HOLD is switched off or a panic clears the pool.
-    if (this.program?.hold) return;
-    const released = allocNoteOff(this.slots, note, 0, this.sustainDown);
-    for (const i of released) {
-      if (this.sustainDown) continue;
+  /**
+   * HOLD and the damper filter are both PER TIMBRE, so note-off is resolved slot by slot
+   * rather than in one call to the allocator.
+   *
+   * `allocNoteOff` keys on (note, channel) and would apply one sustain decision to every
+   * timbre that matched. A Combination can hold a timbre with HOLD on and another with the
+   * damper filtered out, on the same key of the same channel, and each has to be right.
+   */
+  noteOff(note: number, channel = 0): void {
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i]!;
+      if (slot.state !== 'held' || slot.note !== note || slot.channel !== channel) continue;
       const v = this.voices[i]!;
-      if (!v.cfg) continue;
-      this.releaseVoice(v);
+      const timbre = this.timbreOf(v);
+      // HOLD (byte 11 bit1) latches notes on. Ignoring note-off entirely is exactly what the
+      // hardware does; the note ends when HOLD is switched off or a panic clears the pool.
+      if (timbre?.program.hold) continue;
+      // Damper DIS means this timbre never hears the pedal, so it releases regardless.
+      if (this.sustainDown && timbre?.damper !== false) {
+        slot.sustained = true;
+        continue;
+      }
+      slot.state = 'released';
+      if (v.cfg) this.releaseVoice(v);
     }
   }
 
@@ -489,31 +654,50 @@ export class VoiceEngine {
     }
   }
 
+  /**
+   * Joystick position as this timbre sees it. A timbre off the global channel, or one whose
+   * CONTROL CHANGE filter is DIS, does not move — that is the MIDI filter reaching the DSP,
+   * which is the only place it can be heard.
+   */
+  private joyXOf(t: TimbreConfig): number {
+    return t.controlChange && this.controllersReach(t) ? this.joyX : 0;
+  }
+
+  private joyYOf(t: TimbreConfig): number {
+    return t.controlChange && this.controllersReach(t) ? this.joyY : 0;
+  }
+
+  private aftertouchOf(t: TimbreConfig): number {
+    return t.afterTouch && this.controllersReach(t) ? this.aftertouch : 0;
+  }
+
   /** Semitones of pitch modulation reaching this voice from the MG and the controllers. */
   private pitchModOf(v: SlotVoice): number {
-    const p = this.program;
-    if (!p) return 0;
-    const c = p.controllers;
+    const t = this.timbreOf(v);
+    if (!t) return 0;
+    const c = t.program.controllers;
+    const joyY = this.joyYOf(t);
+    const at = this.aftertouchOf(t);
     // Joystick Y up adds pitch MG depth; aftertouch adds its own. Both are additive on top
     // of the program's own MG intensity, which is already inside pitchMgValue.
-    const mgDepth =
-      1 + Math.max(0, this.joyY) * c.jsPitchMgInt + this.aftertouch * c.atPitchMg;
-    const mg = v.cfg?.pitchMgEnable ? this.pitchMgValue * mgDepth : 0;
+    const mgDepth = 1 + Math.max(0, joyY) * c.jsPitchMgInt + at * c.atPitchMg;
+    const mg = v.cfg?.pitchMgEnable ? this.pitchMgValues[v.timbre]! * mgDepth : 0;
     // PITCH MG INTENSITY is in cents at full scale; the bend and aftertouch are semitones.
-    return (
-      mg * PITCH_MG_SEMITONES +
-      this.joyX * c.jsPitchBend +
-      this.aftertouch * c.atPitch
-    );
+    return mg * PITCH_MG_SEMITONES + this.joyXOf(t) * c.jsPitchBend + at * c.atPitch;
   }
 
   private incrementOf(v: SlotVoice): number {
     const cfg = v.cfg!;
-    const semis = cfg.octave * 12 + cfg.interval + v.pitch.level + this.pitchModOf(v);
+    const t = this.timbreOf(v);
+    // KEY TRANSPOSE repitches the sample, exactly as OCTAVE and INTERVAL already do rather
+    // than shifting the keymap lookup. A CHOICE, and the consistent one: all three are
+    // "change the pitch of this timbre" controls in the manual's own words.
+    const semis =
+      cfg.octave * 12 + cfg.interval + (t?.transpose ?? 0) + v.pitch.level + this.pitchModOf(v);
     return incrementFor(
       v.note,
       v.ref!.rootKey,
-      v.ref!.fineCents + cfg.detune,
+      v.ref!.fineCents + cfg.detune + (t?.detune ?? 0),
       v.ref!.sampleRate,
       this.sampleRate,
       semis,
@@ -522,29 +706,32 @@ export class VoiceEngine {
 
   private coefficientOf(v: SlotVoice): number {
     const cfg = v.cfg!;
-    const p = this.program;
-    const c = p?.controllers;
+    const t = this.timbreOf(v);
+    const c = t?.program.controllers;
     const track = keyboardTrackingRatio(cfg.cutoffTracking, v.note, cfg.cutoffCenterKey);
     // The filter EG is SIGNED and scaled by EG Intensity — it swings both ways around the
     // base cutoff, which is why the EG level is applied as an exponent rather than a gain.
     let semis = v.filt.level * v.egIntensity * EG_CUTOFF_SEMITONES;
-    if (c) {
-      const mgDepth =
-        1 + Math.max(0, -this.joyY) * c.jsCutoffMgInt + this.aftertouch * c.atCutoffMg;
-      if (cfg.cutoffMgEnable) semis += this.cutoffMgValue * mgDepth * CUTOFF_MOD_SEMITONES;
+    if (c && t) {
+      const joyY = this.joyYOf(t);
+      const at = this.aftertouchOf(t);
+      const mgDepth = 1 + Math.max(0, -joyY) * c.jsCutoffMgInt + at * c.atCutoffMg;
+      if (cfg.cutoffMgEnable) {
+        semis += this.cutoffMgValues[v.timbre]! * mgDepth * CUTOFF_MOD_SEMITONES;
+      }
       // Joystick Y up sweeps the filter; aftertouch has its own signed depth.
-      semis += Math.max(0, this.joyY) * c.jsCutoffSweep * CUTOFF_MOD_SEMITONES;
-      semis += this.aftertouch * c.atCutoff * CUTOFF_MOD_SEMITONES;
+      semis += Math.max(0, joyY) * c.jsCutoffSweep * CUTOFF_MOD_SEMITONES;
+      semis += at * c.atCutoff * CUTOFF_MOD_SEMITONES;
     }
     const hz = cfg.cutoffHz * track * Math.pow(2, semis / 12);
     return cutoffCoefficient(hz, this.sampleRate);
   }
 
   /** Amplitude modulation from aftertouch. Signed, so it can duck as well as swell. */
-  private ampModOf(): number {
-    const c = this.program?.controllers;
-    if (!c) return 1;
-    return Math.max(0, 1 + this.aftertouch * c.atAmp);
+  private ampModOf(v: SlotVoice): number {
+    const t = this.timbreOf(v);
+    if (!t) return 1;
+    return Math.max(0, 1 + this.aftertouchOf(t) * t.program.controllers.atAmp);
   }
 
   /**
@@ -556,10 +743,28 @@ export class VoiceEngine {
    * updates themselves becoming a per-block click.
    */
   render(outL: Float32Array, outR: Float32Array, count: number): void {
-    outL.fill(0, 0, count);
-    outR.fill(0, 0, count);
-    const p = this.program;
-    if (!p) {
+    this.renderBuses(outL, outR, null, null, count);
+  }
+
+  /**
+   * Render into the effect section's FOUR inputs. `c` and `d` may be null, in which case the
+   * two buses only a panpot can reach are discarded — which is what Program mode wants, and
+   * what keeps `render` a two-buffer call for the Phase 2 golden buffers.
+   *
+   * The bus split IS the panpot, and everything downstream of here is Phase 4's.
+   */
+  renderBuses(
+    a: Float32Array,
+    b: Float32Array,
+    c: Float32Array | null,
+    d: Float32Array | null,
+    count: number,
+  ): void {
+    a.fill(0, 0, count);
+    b.fill(0, 0, count);
+    c?.fill(0, 0, count);
+    d?.fill(0, 0, count);
+    if (this.timbres.length === 0) {
       this.frames += count;
       return;
     }
@@ -571,45 +776,52 @@ export class VoiceEngine {
     let done = 0;
     while (done < count) {
       const chunk = Math.min(CONTROL_BLOCK, count - done);
-      this.renderChunk(outL, outR, done, chunk, p);
+      this.renderChunk(a, b, c, d, done, chunk);
       done += chunk;
     }
   }
 
   private renderChunk(
-    outL: Float32Array,
-    outR: Float32Array,
+    outA: Float32Array,
+    outB: Float32Array,
+    outC: Float32Array | null,
+    outD: Float32Array | null,
     outOffset: number,
     count: number,
-    p: ProgramConfig,
   ): void {
     const dt = count / this.sampleRate;
 
     // The two MGs are program-level: advance them ONCE per control block, not once per
     // slot. Advancing per slot would run them 16x fast whenever the pool filled up, which
-    // is the sort of bug that only shows on a big chord.
+    // is the sort of bug that only shows on a big chord. Eight timbres means eight pairs of
+    // phases, each still advanced exactly once per block.
     //
     // The stick's UP half speeds the pitch MG and its DOWN half the cutoff MG, matching the
     // way the same two halves control their intensities.
-    const c = p.controllers;
-    this.pitchMgValue = mgProcess(
-      this.pitchMgState,
-      p.pitchMg,
-      dt,
-      1 + Math.max(0, this.joyY) * c.jsPitchMgFreq,
-    );
-    this.cutoffMgValue = mgProcess(
-      this.cutoffMgState,
-      p.cutoffMg,
-      dt,
-      1 + Math.max(0, -this.joyY) * c.jsCutoffMgFreq,
-    );
-    const ampMod = this.ampModOf();
+    for (let t = 0; t < this.timbres.length; t++) {
+      const timbre = this.timbres[t]!;
+      const c = timbre.program.controllers;
+      const joyY = this.joyYOf(timbre);
+      this.pitchMgValues[t] = mgProcess(
+        this.pitchMgStates[t]!,
+        timbre.program.pitchMg,
+        dt,
+        1 + Math.max(0, joyY) * c.jsPitchMgFreq,
+      );
+      this.cutoffMgValues[t] = mgProcess(
+        this.cutoffMgStates[t]!,
+        timbre.program.cutoffMg,
+        dt,
+        1 + Math.max(0, -joyY) * c.jsCutoffMgFreq,
+      );
+    }
 
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i]!;
       const v = this.voices[i]!;
       if (slot.state === 'free' || !v.primed || !v.ref || !v.cfg) continue;
+      const timbre = this.timbreOf(v);
+      if (!timbre) continue;
 
       // OSC-2 DELAY START: hold the voice silent and its envelopes un-started. Counting the
       // delay down here rather than scheduling a future note-on keeps the whole engine on
@@ -626,7 +838,9 @@ export class VoiceEngine {
       const ampLevel = egProcess(v.amp, v.ampEg, dt);
       slot.level = ampLevel;
 
-      let gainEnd = ampLevel * v.ampGain * ampMod;
+      // OUTPUT LEVEL is the timbre's, read LIVE rather than captured at note-on, so moving a
+      // fader or the panpot moves the notes already sounding.
+      let gainEnd = ampLevel * v.ampGain * this.ampModOf(v) * timbre.level;
 
       // Forced steal fade, applied on top of the envelope.
       if (v.fadeFrames > 0) {
@@ -641,15 +855,16 @@ export class VoiceEngine {
       const scratch = this.scratch;
       scratch.fill(0, 0, count);
       renderInto(scratch, 0, count, v.ref, v.player, v.lastInc, incEnd, v.lastGain, gainEnd);
-      filterBlock(v.lp, scratch, 0, count, v.lastCoeff, coeffEnd, p.resonance);
+      filterBlock(v.lp, scratch, 0, count, v.lastCoeff, coeffEnd, timbre.program.resonance);
 
-      // Mono for now: the M1's stereo image comes from the effects section (Phase 4), and
-      // the reverbs are mono-sum in / stereo out anyway.
-      for (let n = 0; n < count; n++) {
-        const s = scratch[n]!;
-        outL[outOffset + n] = outL[outOffset + n]! + s;
-        outR[outOffset + n] = outR[outOffset + n]! + s;
-      }
+      // The panpot, and the only place a voice becomes stereo. Each slot is MONO up to here —
+      // the M1's stereo image comes from the effect section, whose two inputs are buses A and
+      // B. Program mode lands unity on both, which is the mono sum Phase 2's goldens measure.
+      const bus = timbre.bus;
+      mixBus(outA, outOffset, scratch, count, bus[0]);
+      mixBus(outB, outOffset, scratch, count, bus[1]);
+      mixBus(outC, outOffset, scratch, count, bus[2]);
+      mixBus(outD, outOffset, scratch, count, bus[3]);
 
       v.lastInc = incEnd;
       v.lastGain = gainEnd;
@@ -682,6 +897,34 @@ export class VoiceEngine {
     for (const s of this.slots) if (s.state !== 'free') n++;
     return n;
   }
+
+  /** Slots currently sounding, per timbre. Drives the panel's per-row voice indicator. */
+  activeSlotsOf(timbre: number): number {
+    let n = 0;
+    for (const s of this.slots) if (s.state !== 'free' && s.timbre === timbre) n++;
+    return n;
+  }
+}
+
+/**
+ * Add `src` into one bus at `gain`, skipping the work entirely when the gain is zero.
+ *
+ * A panpot position never touches more than two of the four buses, so the guard skips at
+ * least half the mixing on every slot rather than multiplying by zero four times.
+ */
+function mixBus(
+  dst: Float32Array | null,
+  offset: number,
+  src: Float32Array,
+  count: number,
+  gain: number,
+): void {
+  if (!dst || gain === 0) return;
+  if (gain === 1) {
+    for (let n = 0; n < count; n++) dst[offset + n] = dst[offset + n]! + src[n]!;
+    return;
+  }
+  for (let n = 0; n < count; n++) dst[offset + n] = dst[offset + n]! + src[n]! * gain;
 }
 
 /** Controller depths that contribute nothing, whatever the joystick and aftertouch do. */
