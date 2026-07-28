@@ -27,8 +27,38 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+
+      # THE SAMPLE BANK IS BUILT HERE, NOT COMMITTED. `public/bank/` is 50 MiB of generated
+      # output and is gitignored, so without this step the deployed page renders the whole
+      # panel and then fails on POWER with BANK ERROR — a silent instrument.
+      #
+      # FluidR3_GM is MIT-licensed and packaged by Debian/Ubuntu, so the runner installs it
+      # from apt rather than downloading 141 MB from a third-party mirror that may vanish.
+      # `fluid-soundfont-gm` puts it at /usr/share/sounds/sf2/FluidR3_GM.sf2, which is the
+      # path BORGM1_SF2 then points at — the same override a local checkout uses.
+      - name: Install the FluidR3_GM soundfont (MIT)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fluid-soundfont-gm
+          ls -l /usr/share/sounds/sf2/FluidR3_GM.sf2
+
+      # Runs the loop-seam gate on its own output, so a bad bank fails the deploy rather
+      # than shipping an instrument that clicks on every sustained note.
+      - name: Build the sample bank
+        env:
+          BORGM1_SF2: /usr/share/sounds/sf2/FluidR3_GM.sf2
+        run: npm run build:bank
+
       - name: Build
         run: npm run build
+
+      # Vite copies `public/` into `dist/`, so the bank should now be alongside the app.
+      # Asserted rather than assumed: a missing bank is invisible until someone hits POWER.
+      - name: Verify the bank shipped
+        run: |
+          test -f dist/bank/bank.json || { echo "::error::dist/bank/bank.json missing"; exit 1; }
+          test -f dist/bank/bank.pcm  || { echo "::error::dist/bank/bank.pcm missing";  exit 1; }
+          echo "bank.pcm $(du -h dist/bank/bank.pcm | cut -f1), total dist $(du -sh dist | cut -f1)"
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
