@@ -15,6 +15,7 @@
 
 import { snapEffectParam } from '../../data/effectParams';
 import { loadBank, type BankMultisound, type LoadedBank } from './bankLoader';
+import type { RecordFormat } from './recordHelpers';
 import { StudioContext } from './context';
 import { buildProgramConfig, type OscSource } from './program/programConfigCore';
 import { buildKeymap, type KeyZoneSpec } from './voice/keymapCore';
@@ -152,6 +153,30 @@ class EngineBridge {
   setResonance(on: boolean): void {
     m1Store.setExtension('resonance', on);
     this.pushProgram();
+  }
+
+  // ---- master recording -------------------------------------------------------------------
+  // Thin forwards: StudioContext owns the recorder (it needs the private context and the
+  // softClip tap), the UI owns the button, and this is the one seam between them.
+
+  /** 'wav' = lossless PCM tap; 'webm' = MediaRecorder/opus. Safe to call before power-on. */
+  setRecordFormat(format: RecordFormat): void {
+    this.studio.setRecordFormat(format);
+  }
+
+  /** Begin recording the master output. False when unpowered or unsupported. */
+  startRecording(): boolean {
+    return this.studio.startRecording();
+  }
+
+  /** Stop, assemble the file, and trigger its download. */
+  stopRecording(): Promise<Blob | null> {
+    return this.studio.stopRecording();
+  }
+
+  /** Poll source for the RECORD lamp and elapsed readout. */
+  getRecordingState(): { recording: boolean; elapsedMs: number } {
+    return this.studio.getRecordingState();
   }
 
   // ---- effects ----------------------------------------------------------------------------
