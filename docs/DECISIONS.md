@@ -735,3 +735,42 @@ labelled and collected at the top of their files for exactly that reason.
 **The negative-cutoff-tracking question from Phase 3 is NOT settled**, because settling it
 needed the A/B that did not happen. I17 uses tracking `0` (full tracking) and never a negative
 value, so the gate patch exercises neither reading. It stays as Phase 3 left it.
+
+---
+
+## 2026-07-28 — Layout repair, after the first real-window review
+
+The first human look at the app (a ~1900px window) found text collisions and a keyboard
+overflowing its band. Root causes and the decisions they forced, so nobody re-introduces them:
+
+**The keybed is now the full 88-key piano, A0–C8 — and that is a GEOMETRY fix as much as a
+spec fix.** UI-SPEC §6 measured the reference at 88 keys all along; the Phase 2 bed was
+2 octaves + top C. The overflow mechanism: `.keybed` is width-fitted (`width:100%;
+height:auto`), so its rendered height is width ÷ aspect — and 15 white keys give a 2.8:1
+aspect that made the SVG ~400px tall in a ~144px band, climbing over the panel. 52 white keys
+give 9.6:1, which fits the band at any window size. **A width-fitted SVG's height is set by
+its viewBox aspect, not by its container** — worth remembering, because the bug is invisible
+at the aspect ratio you happen to develop at. Octave-shifted notes now clamp to MIDI 0..127
+(A0 −2 octaves is note −3, which would have been an out-of-bounds keymap read).
+
+**Every control now FITS the 66px cell, and the two that cannot are handled by name.** The
+switch (label above) is shifted down 10px inside its cell so the label stays off the section
+title and off the row above; knob labels are one clamped line, never two — the second line
+was 15px into the next row, printing across any switch that wrapped beneath (the KBD TRACK
+sections' "RELEASE over CENTER KEY"). The 4-position waveform switch still pokes 3px over the
+cell top, so `layout.ts` keeps it out of column 0 — recorded THERE as a comment, because the
+constraint is invisible at the declaration site.
+
+**The EG graphs got a second text row and collision-proof handles.** Title and segment
+headers shared one row and printed over each other (`PAD.t` 22 → 38). Handle letters flip
+BELOW a handle within 14px of the well top, and `xPositions` enforces a 16px minimum spread —
+INIT PROG's zero attack/decay/slope parked three amp-EG handles on one pixel, letters
+overprinted and only the topmost grabbable.
+
+**Layout verification is now a MEASUREMENT, not an eyeball**: the audit (Playwright,
+1900×1030, all six pages) walks every rendered `<text>` pair and fails any overlap over
+8px² between different controls, plus asserts the keybed's band. It went dozens → 4 → 2 → 0,
+and each intermediate count was a distinct bug class. The lesson repeats Phase 2's: the unit
+tests assert columns fit bands and every parameter is on a page, and were blind to glyphs
+printing over glyphs — only measuring the RENDERED page sees that. The script lives in the
+session record; rebuilding it is ~80 lines around `getBoundingClientRect` intersection.

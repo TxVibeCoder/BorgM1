@@ -16,6 +16,19 @@ import { COLORS, FONT_CONDENSED } from '../theme';
 const NOTCH_SPACING = 16;
 const SLOT_W = 10;
 
+/**
+ * The whole control is shifted DOWN by this much within its cell.
+ *
+ * The switch is the one control whose label sits ABOVE it, so centring the slot on the cell
+ * centre pushed the label ~10px past the cell top — where it landed on the section title
+ * (row 1) or on the label of the knob in the row above (wrapped rows: the KBD TRACK
+ * sections' RELEASE switch printing over CENTER KEY). Shifting the group down puts the
+ * label + slot INSIDE the 66px cell for 2- and 3-position switches; the two 4-position
+ * waveform switches overflow 3px above and are kept out of column 0 by layout.ts so they
+ * cannot reach the title.
+ */
+const DY = 10;
+
 export function Switch({ def, value, onChange, x, y }: SwitchProps) {
   const positions = def.positions ?? [];
   const count = positions.length;
@@ -24,7 +37,7 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
   // resolved position so an unknown/stale `value` can't make the aria-label disagree with the
   // visible lever (B5). Falls back to the raw value only in the degenerate empty-positions case.
   const shownPos = positions[idx] ?? value;
-  const yOf = (i: number) => (i - (count - 1) / 2) * NOTCH_SPACING;
+  const yOf = (i: number) => DY + (i - (count - 1) / 2) * NOTCH_SPACING;
   const slotH = Math.max(count - 1, 1) * NOTCH_SPACING + 14;
 
   const advance = (dir: 1 | -1) => {
@@ -66,23 +79,22 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
           first so it sits behind the visuals; fill carries the hit. */}
       <rect
         x={-34}
-        y={-(slotH / 2 + 18)}
+        y={DY - slotH / 2 - 20}
         width={84}
-        height={slotH / 2 + 18 + slotH / 2}
+        height={slotH + 28}
         fill="transparent"
       />
 
-      {/* label above — fontSize 10 and width-clamped: at 54-unit row pitch an
-          unclamped 11px label collides with the label of the row above */}
+      {/* label above — width-clamped so a long legend cannot invade the neighbouring cell */}
       <text
-        y={-(slotH / 2 + 8)}
+        y={DY - slotH / 2 - 6}
         textAnchor="middle"
         fontFamily={FONT_CONDENSED}
-        fontSize={12}
+        fontSize={11}
         letterSpacing={0.5}
         fill={COLORS.legend}
-        {...(def.panelLabel.length * 6.5 > 66
-          ? { textLength: 66, lengthAdjust: 'spacingAndGlyphs' as const }
+        {...(def.panelLabel.length * 6.0 > 62
+          ? { textLength: 62, lengthAdjust: 'spacingAndGlyphs' as const }
           : {})}
       >
         {def.panelLabel.toUpperCase()}
@@ -91,7 +103,7 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
       {/* recessed slot */}
       <rect
         x={-SLOT_W / 2}
-        y={-slotH / 2}
+        y={DY - slotH / 2}
         width={SLOT_W}
         height={slotH}
         rx={SLOT_W / 2}
@@ -124,7 +136,7 @@ export function Switch({ def, value, onChange, x, y }: SwitchProps) {
           fontSize={11}
           letterSpacing={0.3}
           fill={i === idx ? COLORS.legend : COLORS.legendDim}
-          {...(pos.length * 5.8 > 36 ? { textLength: 36, lengthAdjust: 'spacingAndGlyphs' as const } : {})}
+          {...(pos.length * 5.8 > 32 ? { textLength: 32, lengthAdjust: 'spacingAndGlyphs' as const } : {})}
         >
           {pos.toUpperCase()}
         </text>

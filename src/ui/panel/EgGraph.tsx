@@ -35,7 +35,10 @@ interface Breakpoint {
   levelId?: string;
 }
 
-const PAD = { l: 16, r: 12, t: 22, b: 16 };
+// t is sized for TWO text rows above the well — the frame title, then the segment headers.
+// They used to share one row and the first header printed across the title ("FILTER EG 1"
+// with ATTACK on top of it); the well gives up 16px instead.
+const PAD = { l: 16, r: 12, t: 38, b: 16 };
 const HANDLE = 7;
 
 /** Pixels of vertical drag for the full level range. Matches the knob's feel. */
@@ -73,6 +76,7 @@ function Handle({
   levelMin,
   levelMax,
   enabled,
+  wellTop,
 }: {
   x: number;
   y: number;
@@ -85,6 +89,8 @@ function Handle({
   levelMin: number;
   levelMax: number;
   enabled: boolean;
+  /** Top edge of the graph well, so the letter can dodge below a top-parked handle. */
+  wellTop: number;
 }) {
   const start = useRef({ px: 0, py: 0, time: 0, level: 0 });
 
@@ -131,9 +137,12 @@ function Handle({
         onPointerUp={(e) => scrub(e, true)}
         onPointerCancel={(e) => scrub(e, true)}
       />
+      {/* The letter flips BELOW the handle near the top of the well: a handle at a level
+          of 99 sits on the well's top edge, and a letter above it would print into the
+          segment-header row (INIT PROG parks three amp-EG handles exactly there). */}
       <text
         x={x}
-        y={y - HANDLE}
+        y={y - wellTop < 14 ? y + HANDLE + 8 : y - HANDLE}
         fill={COLORS.legendDim}
         fontFamily={FONT_CONDENSED}
         fontSize={9}
@@ -164,6 +173,16 @@ function xPositions(times: number[], box: RegionBox): number[] {
     // stacks on one pixel and none of them can be grabbed.
     out.push(box.x + PAD.l + (total > 0 ? (acc / total) * w : (out.length / seconds.length) * w));
   }
+  // A PARTIALLY zero envelope stacks handles too — INIT PROG's amp EG has zero attack,
+  // decay and slope, which put A, D and S on the same pixel (their letters printed over
+  // each other, and only the topmost was grabbable). Enforce a minimum spacing forward,
+  // then walk BACK from the right edge so the spread cannot push the last handle out of
+  // the well. Purely a display/hit-target adjustment — the times themselves are untouched.
+  const MIN_GAP = 16;
+  for (let i = 1; i < out.length; i++) out[i] = Math.max(out[i]!, out[i - 1]! + MIN_GAP);
+  const right = box.x + PAD.l + w;
+  out[out.length - 1] = Math.min(out[out.length - 1]!, right);
+  for (let i = out.length - 2; i >= 1; i--) out[i] = Math.min(out[i]!, out[i + 1]! - MIN_GAP);
   return out;
 }
 
@@ -210,7 +229,8 @@ function segmentHeaders(box: RegionBox, labels: string[]) {
     <text
       key={label}
       x={box.x + PAD.l + ((i + 0.5) / labels.length) * w}
-      y={box.y + PAD.t - 11}
+      // The second text row: fully below the title's descent, just above the well's top edge.
+      y={box.y + PAD.t - 12}
       fill={COLORS.legendDim}
       fontFamily={FONT_CONDENSED}
       fontSize={8}
@@ -293,6 +313,7 @@ export function FilterEgGraph({ box, osc, enabled }: EgGraphProps) {
           levelMin={-99}
           levelMax={99}
           enabled={enabled}
+          wellTop={box.y + PAD.t}
         />
       ))}
     </GraphFrame>
@@ -363,6 +384,7 @@ export function AmpEgGraph({ box, osc, enabled }: EgGraphProps) {
           levelMin={0}
           levelMax={99}
           enabled={enabled}
+          wellTop={box.y + PAD.t}
         />
       ))}
     </GraphFrame>

@@ -65,10 +65,17 @@ export function KeyboardPanel({ octave, held, onNoteOn, onNoteOff }: KeyboardPan
 
   const press = useCallback(
     (note: number | null) => {
+      // An 88-key bed shifted ±2 octaves can leave MIDI range (A0 −2 oct = −3); a note
+      // that does not exist must be silence, not an out-of-bounds keymap read.
+      const shifted = note !== null ? note + octave * 12 : null;
+      const legal = shifted !== null && shifted >= 0 && shifted <= 127 ? shifted : null;
       if (note === current.current) return;
-      if (current.current !== null) onNoteOff(current.current + octave * 12);
-      current.current = note;
-      if (note !== null) onNoteOn(note + octave * 12, 100);
+      if (current.current !== null) {
+        const prev = current.current + octave * 12;
+        if (prev >= 0 && prev <= 127) onNoteOff(prev);
+      }
+      current.current = legal !== null ? note : null;
+      if (legal !== null) onNoteOn(legal, 100);
     },
     [octave, onNoteOff, onNoteOn],
   );

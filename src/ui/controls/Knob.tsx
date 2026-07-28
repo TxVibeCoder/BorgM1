@@ -76,37 +76,33 @@ interface InteractionState {
  * wider than the knob footprint (maxW), then width-clamps each line. Two short
  * lines beat one unreadably-squished one at the panels' 52–58-unit knob pitch.
  */
+/**
+ * ONE line, always. This used to wrap long legends to two lines, and the second line
+ * reached ~15px past the cell bottom — harmless when the next row is more knobs (their
+ * bodies start lower), but printing straight across the label of any SWITCH beneath, which
+ * is exactly the "RELEASE over CENTER KEY" garble the wrapped KBD TRACK sections showed.
+ * A clamped single line stays inside the 66px cell rhythm no matter what sits below;
+ * squeezed condensed caps are the period look anyway.
+ */
 function KnobLabel({ label, r }: { label: string; r: number }) {
   const maxW = 2 * r + 26;
   const text = label.toUpperCase();
-  const estW = (s: string) => s.length * 6.6;
-  const clamp = (s: string) =>
-    estW(s) > maxW ? { textLength: maxW, lengthAdjust: 'spacingAndGlyphs' as const } : {};
-
-  let lines: string[] = [text];
-  if (estW(text) > maxW && text.includes(' ')) {
-    const mid = text.length / 2;
-    let best = -1;
-    for (let i = text.indexOf(' '); i !== -1; i = text.indexOf(' ', i + 1)) {
-      if (best === -1 || Math.abs(i - mid) < Math.abs(best - mid)) best = i;
-    }
-    lines = [text.slice(0, best), text.slice(best + 1)];
-  }
+  const clamp =
+    text.length * 6.2 > maxW
+      ? { textLength: maxW, lengthAdjust: 'spacingAndGlyphs' as const }
+      : {};
 
   return (
     <text
       y={r + 16}
       textAnchor="middle"
       fontFamily={FONT_CONDENSED}
-      fontSize={12}
-      letterSpacing={0.5}
+      fontSize={11}
+      letterSpacing={0.4}
       fill={COLORS.legend}
+      {...clamp}
     >
-      {lines.map((line, i) => (
-        <tspan key={i} x={0} dy={i === 0 ? 0 : 12} {...clamp(line)}>
-          {line}
-        </tspan>
-      ))}
+      {text}
     </text>
   );
 }

@@ -27,9 +27,16 @@ export function Joystick({ box }: { box: RegionBox }) {
   const [aftertouch, setAftertouch] = useState(0);
   const ref = useRef<SVGRectElement | null>(null);
 
-  const size = Math.min(box.w, box.h) - 12;
+  // The box has to hold FOUR stacked things — label, pad, AFTER TOUCH label, slider — so
+  // the pad is sized from the height MINUS the other three, not from the raw box. Sizing it
+  // `min(w,h) − 12` left the pad covering its own label and pushed the slider off the
+  // bottom of the wheels SVG entirely.
+  const labelBandH = 14;
+  const atBandH = 30;
+  const size = Math.min(box.w - 24, box.h - labelBandH - atBandH - 4);
   const cx = box.x + box.w / 2;
-  const cy = box.y + box.h / 2;
+  const padTop = box.y + labelBandH;
+  const cy = padTop + size / 2;
   const half = size / 2 - KNOB_R;
 
   const move = useCallback(
@@ -59,7 +66,7 @@ export function Joystick({ box }: { box: RegionBox }) {
     <g>
       <text
         x={cx}
-        y={box.y + 12}
+        y={box.y + 9}
         fill={COLORS.legendDim}
         fontFamily={FONT_CONDENSED}
         fontSize={9}
@@ -112,7 +119,7 @@ export function Joystick({ box }: { box: RegionBox }) {
           — otherwise the five AFTER TOUCH depths are editable and permanently silent. */}
       <text
         x={cx}
-        y={cy + size / 2 + 18}
+        y={padTop + size + 12}
         fill={COLORS.legendDim}
         fontFamily={FONT_CONDENSED}
         fontSize={9}
@@ -123,7 +130,7 @@ export function Joystick({ box }: { box: RegionBox }) {
       </text>
       <rect
         x={cx - size / 2}
-        y={cy + size / 2 + 24}
+        y={padTop + size + 17}
         width={size}
         height={10}
         rx={5}
@@ -132,7 +139,7 @@ export function Joystick({ box }: { box: RegionBox }) {
       />
       <rect
         x={cx - size / 2}
-        y={cy + size / 2 + 24}
+        y={padTop + size + 17}
         width={size * aftertouch}
         height={10}
         rx={5}
@@ -141,7 +148,7 @@ export function Joystick({ box }: { box: RegionBox }) {
       />
       <rect
         x={cx - size / 2}
-        y={cy + size / 2 + 20}
+        y={padTop + size + 13}
         width={size}
         height={18}
         fill="transparent"

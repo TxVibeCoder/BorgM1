@@ -164,10 +164,13 @@ const AMP_VEL: ParamSection = {
   ],
 };
 
+// FREQUENCY first, WAVEFORM second — not cosmetic. The 4-position waveform switch is the
+// one control that cannot quite fit the 66px cell (its label pokes 3px above the cell top),
+// which is harmless anywhere except column 0 of row 1, where it touches the section title.
 const PITCH_MG: ParamSection = {
   title: 'PITCH MG',
   params: [
-    'PMG_WAVE', 'PMG_FREQ', 'PMG_DELAY', 'PMG_INTENSITY',
+    'PMG_FREQ', 'PMG_WAVE', 'PMG_DELAY', 'PMG_INTENSITY',
     'PMG_OSC1_ENABLE', 'PMG_OSC2_ENABLE', 'PMG_KEY_SYNC',
   ],
 };
@@ -175,7 +178,7 @@ const PITCH_MG: ParamSection = {
 const FILTER_MG: ParamSection = {
   title: 'FILTER MG',
   params: [
-    'FMG_WAVE', 'FMG_FREQ', 'FMG_DELAY', 'FMG_INTENSITY',
+    'FMG_FREQ', 'FMG_WAVE', 'FMG_DELAY', 'FMG_INTENSITY',
     'FMG_OSC1_ENABLE', 'FMG_OSC2_ENABLE', 'FMG_KEY_SYNC',
   ],
 };
