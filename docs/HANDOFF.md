@@ -151,6 +151,26 @@ since Phase 0 and still unwired. Don't rewrite it and don't confuse the two.
   made a SINGLE combination exactly 6 dB quieter than the same program in Program mode, and the
   manual says Program mode *is* 5:5. The reasoning is in `DECISIONS.md` and in `panpotGains`.
 
+## Deployment, and the trap in it
+
+`main` auto-deploys to **<https://txvibecoder.github.io/BorgM1/>** via
+`.github/workflows/deploy.yml`.
+
+**The runner builds the sample bank as well as the app, and it has to.** `public/bank/` is
+50 MiB of generated output and is gitignored, so the first deploy shipped a page that rendered
+the whole panel perfectly and then failed on POWER with `BANK ERROR` — a completely silent
+instrument that looked fine. CI installs `fluid-soundfont-gm` from apt (FluidR3_GM is MIT and
+Debian packages it, so there is no third-party mirror to rot), points `BORGM1_SF2` at it, and
+runs `npm run build:bank` before `npm run build`. A final step asserts `dist/bank/` exists.
+
+**If you change anything about the bank or the build, check the deployed page, not just
+localhost.** The failure mode is invisible until someone presses POWER, and `npm run dev`
+never exercises it because your local `public/bank/` is already populated.
+
+Each visitor downloads 50 MiB once, cached by the Cache API afterwards. Pages' soft bandwidth
+limit is 100 GB/month, so that is roughly 2,000 cold loads — fine, but worth knowing before
+linking it anywhere busy.
+
 ## Environment friction, already paid for
 
 - **PowerShell mangles this project's prose.** `Set-Content` turns em dashes into mojibake. Use

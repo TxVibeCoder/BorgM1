@@ -16,6 +16,12 @@ timbres** on an 8-row strip, sharing one 16-slot pool and routed by the 14-posit
 reaches effect buses C and D. One command builds the sample bank. 1070 tests green plus a
 Playwright layout audit. Phase 6 — the browser and the factory bank — is next.
 
+**▶ Play it: <https://txvibecoder.github.io/BorgM1/>** — press **POWER** and wait for `BANK OK`.
+
+The page pulls a **50 MiB sample bank** on first load, which is the whole instrument's PCM. It
+is cached by the Cache API afterwards, so only the first visit pays for it. There is no server:
+the bank is a static file and every voice is rendered in an `AudioWorklet` in your browser.
+
 ## Quick start
 
 ```bash
@@ -57,6 +63,22 @@ copy. The output lands in `public/bank/` (gitignored). Sources and licences are 
 | `npm run probe:effects` | Validates the effect table against Korg's factory bank (skips cleanly without it) |
 | `npm run probe:combis` | The same, for the 124-byte Combination table. **100/100 byte-exact** |
 | `npx playwright test` | The rendered-page layout audit — text and control collisions at a real window size |
+
+## Deployment
+
+`.github/workflows/deploy.yml` publishes `main` to GitHub Pages. The one non-obvious step is
+that **the runner builds the sample bank too** — `public/bank/` is 50 MiB of generated output
+and is gitignored, so without it the deployed page renders the entire panel and then fails on
+POWER with `BANK ERROR`.
+
+FluidR3_GM is MIT-licensed and packaged by Debian/Ubuntu, so CI installs `fluid-soundfont-gm`
+from apt rather than pulling 141 MB from a third-party mirror that might disappear.
+`npm run build:bank` runs its own loop-seam gate, so a bad bank fails the deploy instead of
+shipping an instrument that clicks on every sustained note, and a final step asserts
+`dist/bank/` exists — a missing bank is invisible until someone presses POWER.
+
+Vite's `base` is `/BorgM1/` on build and `/` in dev, which is what makes the same tree work
+both on Pages and on `localhost:5184`.
 
 ## Documentation
 
