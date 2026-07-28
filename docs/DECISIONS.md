@@ -774,3 +774,46 @@ and each intermediate count was a distinct bug class. The lesson repeats Phase 2
 tests assert columns fit bands and every parameter is on a page, and were blind to glyphs
 printing over glyphs — only measuring the RENDERED page sees that. The script lives in the
 session record; rebuilding it is ~80 lines around `getBoundingClientRect` intersection.
+
+---
+
+## 2026-07-28 — RECORD, and the inherited features still without switches
+
+**The master recorder is wired to a header control.** `MasterRecorder` and `recordHelpers`
+came over from SynthStack in Phase 0 and had sat in `StudioContext` with no way to reach them
+since — engine with no switch. The bridge now forwards the four calls and the header carries a
+lamp, an elapsed readout and a per-take `WAV`/`WEBM` chip.
+
+**WAV is the default, not WEBM.** The lossless PCM tap is the point of having a recorder in a
+project whose acceptance test is an A/B against a commercial record; Opus is offered for when
+size matters more than fidelity. The format applies to the NEXT take and is locked while
+recording, because a format that changed mid-take would describe a file that does not exist.
+
+**The elapsed readout polls at 4 Hz, and that does not violate the no-`setInterval` rule.**
+CLAUDE.md forbids `setInterval`/`setTimeout` for AUDIO EVENTS — scheduling sound. This is a UI
+label reading a clock the recorder already keeps; nothing about when a sample is heard depends
+on it. The interval also exists only while a take is running.
+
+**Verified end to end in the running app rather than by unit test**, per the standing rule: the
+real button starts the recorder, the readout ticks, stop triggers an actual browser download,
+and the resulting file reads back as a valid 48 kHz stereo 16-bit WAV with signal in it. A unit
+test could not have reached any of that — `MediaRecorder`, the blob and the download are all
+browser surface.
+
+### Deliberately still unwired, and the distinction matters
+
+Two more SynthStack inheritances are **built and tested but have no UI**, which is a different
+state from "not built" and is worth stating so a later session does not rewrite them:
+
+- **`PresetPicker`** — factory list, named user slots, two-step-confirm delete, `.json`
+  export/import, and a Node render harness that already tests all of it. It needs a
+  `SetupBridge` implementation against the store. It is the USER-SETUP surface and is **not**
+  Phase 6's program browser, which UI-SPEC specifies as a different thing entirely (two 4x4
+  tag grids, live faceting, card paging, APPLY-without-closing).
+- **MIDI pitch bend and mod wheel (CC1)** — decoded, channel-filtered and unit-tested in
+  `webMidiInput`; simply not routed into the joystick's X/Y. Note-on/off, the channel filter
+  and the hot-unplug panic ARE wired. Sustain (CC64) is not decoded at all.
+
+Neither was pulled forward on the reasoning that a phase's scope is the phase's scope; both are
+recorded here because "already written" is invisible from the outside and is exactly the sort
+of thing that gets duplicated.

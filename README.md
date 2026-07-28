@@ -25,6 +25,10 @@ keyboard. Windows users can run `start-windows.cmd` instead, which does both ste
 
 POWER is the AudioContext unlock — nothing sounds before it, by browser policy, not by choice.
 
+**RECORD** (header, right of the bank status) captures the master output and downloads it when
+you stop. The chip beside it picks the format for the NEXT take: `WAV` is a lossless PCM tap,
+`WEBM` is Opus. Powering off mid-take finishes the file rather than losing it.
+
 ### Building the sample bank
 
 The app plays the *built bank*, which is generated rather than committed. Building it needs a
@@ -118,6 +122,10 @@ move first if it misses are named there.
 
 - **The Phase 4 A/B has not been done by ear.** Everything around it has been measured.
 - **No program browser, no WRITE.** Phase 6 owns those; the program name is display-only.
+- **Two inherited features are built and tested but have no UI yet.** `PresetPicker` (named
+  user setups, `.json` export/import) needs a `SetupBridge` binding; MIDI **pitch bend and
+  mod wheel** are decoded by `webMidiInput` but not routed to the joystick. Both are roughly
+  one binding each — they are unwired, not unwritten.
 - **DRUMS mode plays one drum per key** and unassigned keys are silent, which is authentic.
   Assembling the four selectable Drum Kits is Phase 5/6.
 - **39 of 100 multisounds and 12 of 44 drums are approximated** from the nearest General MIDI

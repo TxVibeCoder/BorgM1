@@ -19,9 +19,11 @@ plumbing. Estimates are focused sessions (roughly a working day).
 **Where things stand:** the instrument plays 16-voice polyphonic multisamples (8 in DOUBLE) from
 the on-screen keybed and over Web MIDI, with all 100 multisounds selectable, **all 139 program
 parameters editable on a six-page panel and audible in the engine**, and **all 33 effect
-algorithms in a two-slot master section with real routing** — so the output is now stereo. 908
-unit tests, typecheck, build and bank build all clean. What is *not* built yet: Combinations
-and the browser.
+algorithms in a two-slot master section with real routing** — so the output is now stereo. The
+header also carries a **RECORD** control (WAV lossless or WEBM), wired after Phase 4 closed:
+the recorder came over with the Phase 0 fork and had never had a switch. 908 unit tests,
+typecheck, build and bank build all clean. What is *not* built yet: Combinations and the
+browser.
 
 Every phase's decisions are recorded dated in `DECISIONS.md`; the notes below are the plan as
 written, kept intact so the plan and its outcome can be compared.
@@ -217,7 +219,7 @@ in transit without a compile error.
 
 ---
 
-## Phase 4 — Effects · 3–4 · ◀ NEXT
+## Phase 4 — Effects · 3–4 · ✅ DONE
 
 **Goal:** the first real fidelity gate.
 

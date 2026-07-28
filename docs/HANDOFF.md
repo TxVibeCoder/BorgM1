@@ -1,6 +1,6 @@
 # Handoff — start here
 
-*Written 2026-07-28, at the end of Phase 3. Paste this to a fresh session, or read it yourself
+*Written 2026-07-28, at the end of Phase 4. Paste this to a fresh session, or read it yourself
 after a break.*
 
 ---
@@ -8,20 +8,18 @@ after a break.*
 You are picking up **BorgM1**, a browser emulator of the Korg M1 (1988) PCM workstation.
 Directory: `<repo root>`. Windows, PowerShell.
 
-**Phases 0–3 are done. The instrument plays and it edits.** Your job is **Phase 4 — the
-effects section**, which carries the project's **first fidelity gate**. Do Phase 4 only; do not
-start Phase 5.
+**Phases 0–4 are done. It plays, it edits, and it has its effects — in stereo.** Your job is
+**Phase 5 — Combinations**. Do Phase 5 only; do not start Phase 6.
 
 ## Read first, in this order
 
 1. `CLAUDE.md` — the non-negotiable conventions. Short. All of it applies.
-2. `docs/PLAN.md` — the eight-phase plan with live status. **Phase 4 is your spec.**
-3. `docs/DECISIONS.md` — dated log of what was decided and why. Read the Phase 0–3 entries
-   before proposing anything that contradicts them; several look like obvious improvements and
-   are not.
-4. `docs/UI-SPEC.md` — the layout spec. §3 covers the `INSERT FX` panel.
-5. `docs/BRIEF.md` — **only the "Watch out for" section**, and within it the **Effects**
-   block, which is written for exactly this phase.
+2. `docs/PLAN.md` — the eight-phase plan with live status. **Phase 5 is your spec.**
+3. `docs/DECISIONS.md` — dated log of what was decided and why. Read Phases 0–4 before
+   proposing anything that contradicts them; several look like obvious improvements and are not.
+4. `docs/UI-SPEC.md` — the layout spec. §3's **left column** is the 8-row timbre strip you are
+   about to build; §6b is the browser, which is Phase 6's, not yours.
+5. `docs/BRIEF.md` — **only the "Watch out for" section.**
 
 `README.md` has the code map and the command table.
 
@@ -32,171 +30,166 @@ npm install && npm run build:bank && npm run dev
 ```
 
 Open <http://localhost:5184>, press **POWER**, wait for `BANK OK`, and play the keybed. Turn a
-`CUTOFF` knob and hear it change. If you cannot hear it working, do not start editing it.
+`CUTOFF` knob and hear it change; open the **FX** tab, step effect 1 to `STEREO CHORUS 1` and
+hear it go wide. If you cannot hear it working, do not start editing it.
 
-`npm run build:bank` needs **FluidR3_GM.sf2** (MIT, 141 MB, deliberately not vendored). It is
+`npm run build:bank` needs **FluidR3_GM.sf2** (MIT, 141 MB, deliberately not vendored),
 resolved from `$BORGM1_SF2`, then `assets/`, then `<sibling soundfont dir>/`. The
-third of those is a sibling project — **read-only, never modify it.**
+third is a sibling project — **read-only, never modify it.**
 
-## What Phase 4 is
+## What Phase 5 is
 
-33 effect algorithms plus `No Effect`, two effect slots, the routing matrix — and then the
-acceptance test the whole project is built around.
+The workstation layer: **five Combination types**, eight timbres, and the panpot that finally
+makes the effect matrix's other half reachable.
 
-### Your spec is already located, and it is complete
+### The allocator already models exactly what you need
 
-This is the big head start. **Owner's Manual p.129** prints `*11 EFFECT PARAMETER` in full:
-the 25-byte block layout, all 33 algorithms with every parameter and range, and the
-quantization grids. Read it from **`pg/p129.png`** in the research payload
-(`../BorgM1-research/`).
-
-**Read the IMAGES, not the OCR.** Every table in the MIDI appendix is multi-column and the OCR
-text layers interleave the columns, so one parameter's name lands beside another's range.
-Phase 3 wasted a search on the OCR before transcribing p.127 from the image in a single pass.
-`docs/RESEARCH-INDEX.md` now has a table of exactly which image holds which table.
-
-The byte layout is already reserved and decoded twice over:
-
-- `data/programParams.ts` reserves bytes **38–62** so the record stays 143 bytes and
-  round-trips. Its test asserts the block is left untouched — you will be filling it in.
-- `preload/final.py` in the research payload decodes it and is validated against Korg's own
-  factory bank: **38/39** the two effect types, **40–43** the L/R balances, **44/45** the
-  Output 3/4 pans, **46** the routing bitfield (bit4 = serial), **47–54** and **55–62** the two
-  8-byte parameter blocks.
+`voiceAllocCore` is 16 oscillator SLOTS with atomic DOUBLE claims and per-slot channel, and it
+already keys note-off and sustain by channel. "No per-program limit, but never more than 16
+total" therefore needs **no new mechanism** — eight timbres pointed at the same `allocate`.
+Nothing is reserved and nothing is protected; that is the hardware. Authentic detail worth
+keeping: the metronome costs a slot.
 
 ### The four things PLAN.md says that are easy to skim past
 
-- **Four fewer implementations than it looks.** The `I`/`II` variants of Chorus, Flanger,
-  Phaser and Tremolo are **one modulation block with a phase-invert bit** — confirmed on p.129,
-  where `MG Status` bit1 is the phase and bit0 the waveform.
-- **Reproduce the quantization grids; do not smooth them.** Reverb time 0.1 s steps, E/R time
-  10 ms, EQ 1 dB, and a **piecewise** LFO rate (p.129 note `*11-3-2`: 0.03 Hz steps to 3.00,
-  0.1 to 13.0, whole Hz to 30). Continuous floats sound wrong on every sweep.
-- **4 buses and a 2-effect matrix, not sends.** The `Panpot` parameter *is* the routing.
-  Program mode has no panpot page at all, so a non-drum Program is hard-wired 5:5 into A/B and
-  **cannot reach Effect 2 in PARALLEL**.
-- **Enforce the constraints rather than fixing them.** Asterisked modulation effects cannot
-  pair with Symphonic Ensemble or Rotary Speaker; most effects leave their EQ in circuit even
-  when switched off; reverbs and ER are **mono-sum in, stereo out**.
+- **Five types, not one with a mode flag.** `SINGLE`, `LAYER`, `SPLIT`, `VELOCITY SWITCH`,
+  `MULTI`. Only MULTI exposes the 8-timbre matrix; the other four have their own edit pages
+  **and their own SysEx offsets**. They are not UI subsets of MULTI.
+- **MIDI filter polarity is INVERTED** — OFF means receive, ON means block.
+- **Windows are independent and additive.** Any timbre whose key window, velocity window and
+  channel all match will sound. `coalesceTimbre` already ORDERS an inverted window rather than
+  trusting it (an inverted window silences a timbre with no visible cause).
+- **The panpot is the routing, and Phase 4 built the thing it routes into.** A timbre's
+  14-position panpot (`A`, 9:1…1:9, `B`, `C`, `C+D`, `D`) is what feeds buses C/D — which is
+  what makes PARALLEL mean anything. A Program cannot reach effect 2 in parallel and the FX
+  panel says so; a Combination can, and that is the point.
 
-### The gate
+### Your spec, and the warning that comes with it
 
-Hand-enter `I17 Organ 2` — Organ2 multisound, flat filter and amp envelopes, Stereo Chorus 1
-at depth 99 with EQ +12/+12, into a 3.5 s Hall — and **A/B it against Robin S, "Show Me Love"
-(StoneBridge Mix)**, with extensions off.
+The **124-byte Combination table is TABLE 2 on Owner's Manual p.128** (`pg/p128.png`), with
+its page/position→offset cross-check as **TABLE 6 on `pages/b131.png`** — note `pg/` stops at
+p130, so that one is only in `pages/`. `preload/final.py` decodes 100 combinations at offset
+861.
 
-That patch's filter and amp envelopes do nothing, so 100% of its character is sample + chorus
-+ EQ + hall. If it doesn't match, the cause is unambiguous. **Measure, don't eyeball** — Korg's
-own emulation shipped with wet levels globally too hot (SOS had to drop reverb from 18 to 13).
+**READ THE IMAGES, NOT THE OCR.** Every table in the MIDI appendix is multi-column and the OCR
+interleaves the columns. Phase 3 wasted a search on it; Phase 4 did not repeat the mistake.
+`docs/RESEARCH-INDEX.md` has a table of exactly which image holds which table.
 
-**Phase 3 makes this reachable:** every parameter that patch needs is already editable on the
-panel and audible in the engine, and the flat-envelope shape is the default program.
+**And do what Phase 4 did next: CHECK the spec against the factory bank.** p.129 left three
+questions genuinely ambiguous and Korg's own 100 programs settled all three — including one
+where two decoders in the research payload contradict each other and the more-finished-looking
+one was wrong. `npm run probe:effects` is the template; `scripts/probeEffects.ts` is ~150 lines
+and skips cleanly when the payload is absent. Expect p.128 to have its own ambiguities and plan
+to histogram them, not to argue about them.
 
-## What Phase 3 left you
+## What Phase 4 left you
 
-- **`data/programParams.ts`** — the 143-byte table, 139 parameters, with `encodeParam` /
-  `decodeParam`. The params bag stores **display values**, not bytes, so `decodeProgram` is
-  already Phase 6's factory-bank importer.
-- **`src/engine/program/programConfigCore.ts`** — the one place parameters become engine
-  config. Generic in the sample type, so the same mapping serves the main thread and the
-  worklet without a cast.
-- **`src/engine/dsp/mgCore.ts` and `modCore.ts`** — the MGs and the modulation rules.
-- **`src/ui/panel/`** — the five-page panel. Sections declare *which* parameters, never
-  *where*; `layout.ts` computes positions.
-- **`context.ts` still reserves an `insertSlot`** in the master chain so the effects section is
-  a node swap rather than a refactor.
+- **`data/effectParams.ts`** — the 25-byte block, 33 algorithms, their grids, defaults and the
+  pairing rule, with `encodeEffects`/`decodeEffects`. Round-trips 91/100 factory blocks
+  byte-exactly; the residue is two understood causes, both documented.
+- **`src/engine/dsp/fx/`** — nine DSP blocks plus `effectChainCore`, the two-slot matrix. All
+  pure, all Node-tested.
+- **The engine is stereo.** `EffectChain` runs in the worklet downstream of `VoiceEngine`,
+  which still sums to mono on purpose — that is where the M1's stereo image comes from.
+- **`program.effects`** lives in the state tree beside `program.params`, kept out of the params
+  bag because a slot's parameter set depends on which algorithm it holds.
+- **A RECORD button** in the header (WAV lossless or WEBM), so you can capture what you build.
 
-Engine output is **mono**, deliberately: the M1's stereo image comes from this section, and its
-reverbs are mono-sum in / stereo out anyway.
+## The tests that matter most, and why
 
-## The test that matters most, and why
-
-`test/unit/programConfig.test.ts` holds an **audibility sweep**: one program with every
-modulation live, then change ONE parameter at a time and require the rendered audio to differ.
-It is the only test in the project that catches a parameter which exists in the table and never
-reaches the engine — and it caught two during Phase 3 (`JS_PITCH_MG_FREQ` and `JS_VDF_MG_FREQ`
-were simply never wired). `test/unit/panelLayout.test.ts` does the same for the panel and caught
-a third: an entire section declared and placed on no page.
-
-**Extend the sweep to the effect parameters.** It is the cheapest insurance you will get.
+- **`test/unit/effectDsp.test.ts` — the audibility sweep.** For all 33 algorithms: set every
+  parameter live, change ONE, require the render to differ. It is the only test that catches a
+  parameter which exists in the table and never reaches the DSP. **Extend the same pattern to
+  the Combination fields** — it is the cheapest insurance in the project, and it has now caught
+  dead parameters in two consecutive phases.
+- **`test/unit/panelLayout.test.ts`** — asserts every parameter is on some page, and that every
+  FX algorithm FITS its box. Extend it to the timbre strip.
+- **A rendered-page audit, not just unit tests.** Phase 4's layout was "green" while text
+  printed over text in six places. The audit that found it walks every `<text>` pair's
+  bounding boxes at a real window size and fails any overlap; it went dozens → 0. Rebuild it
+  (~80 lines of Playwright around `getBoundingClientRect`) before you call the timbre strip
+  done — **eight rows of controls is exactly the density that breaks this way.**
 
 ## How to work
 
-- **One branch per phase.** `git checkout -b phase-4-effects`, merge to `main` with `--no-ff`
-  when the gates pass.
+- **One branch per phase.** `git checkout -b phase-5-combinations`, merge with `--no-ff`.
 - **Append to `docs/DECISIONS.md`, dated**, whenever you make a call a later session would
-  otherwise have to re-derive. This is the single highest-value habit in the project.
-- **Label the guesses.** Several curves are already labelled choices rather than M1 facts;
-  add yours to that list rather than burying them.
-- **Verification floor before closing the phase:** `npm test`, `npm run typecheck`,
-  `npm run build` and `npm run build:bank` all clean, plus Phase 4's own gate.
-- **Then drive the app and measure it.** Both Phase 2 bugs and one Phase 3 bug lived in the
-  seam between correct components, where unit tests are blind. Going green is not the same as
-  working.
+  otherwise re-derive. Highest-value habit in the project.
+- **Label the guesses**, next to the existing labelled ones rather than buried.
+- **Verification floor:** `npm test`, `npm run typecheck`, `npm run build`, `npm run build:bank`
+  all clean, plus Phase 5's own gate.
+- **Then drive the app and measure it.** Every phase so far has had at least one bug that lived
+  in the seam between correct components, where unit tests are blind.
 
 ## Traps that will bite you specifically
 
-- **`ManualsLib 819462` is the 2006 SOFTWARE PLUGIN manual, not the hardware one.** It lists
-  `SEND 1`/`SEND 2`/`RETURN LEVEL` and a compressor — none of which existed in 1988. Korg
-  explicitly did *not* model the hardware effects in the Legacy Collection. Use Korg's own CDN
-  PDF (`M1_official.pdf`) or ManualsLib **898710**.
-- **A weak metric will give you a confidently wrong answer.** This has now happened in three
-  separate phases and it is recorded each time. In Phase 3 a peak-bin FFT search reported the
-  pitch bend as *inverted*, and autocorrelation reported a note an octave low. Prefer a
+- **A weak metric will give you a confidently wrong answer.** This has now happened in FOUR
+  phases and is recorded each time. Phase 4's pitch probe read note 60 an octave low, because
+  `Organ2` is a drawbar registration whose loudest partial is the 16' drawbar. **Prefer a
   measurement where a known bias cancels — compare two readings through the same detector and
-  claim only the ratio.
-- **An analyser whose FFT window is longer than your settle time reports the PREVIOUS note.**
-  `fftSize` 32768 at 48 kHz is 683 ms of history. This cost real time in Phase 3.
-- **Extensions default OFF and must heal to OFF.** The gate has to pass with `resonance` off.
-  A state tree that coalesces an unknown flag to "on" breaks the gate silently, which is the
-  worst way for it to break.
+  claim only the ratio.**
+- **Grid-snapping bugs hide from every test that constructs data directly.** Phase 4 shipped a
+  snapper that rewrote `PHASE '180'` to `'0'` — inverting every `I` variant — and 900 tests
+  missed it because only the UI path went through the snapper. Setting up a patch in the
+  running app found it in seconds. **Assert the general form** (round-tripping is identity and
+  idempotent for every field), not the instance you happened to notice.
+- **`ManualsLib 819462` is the 2006 SOFTWARE PLUGIN manual, not the hardware one.** Use Korg's
+  own CDN PDF or ManualsLib **898710**. The Super Guide is pre-release marketing and loses to
+  the Owner's Manual.
+- **Extensions default OFF and must heal to OFF.** Still true, still pinned by test.
+- **A width-fitted SVG's height comes from its viewBox aspect, not its container.** That is how
+  the keybed ended up three times the height of its band. Eight timbre rows are a stack of
+  aspect-ratio decisions; check them at a real window size.
 
 ## Environment friction, already paid for
 
-- **PowerShell here-strings and bash heredocs both break on this project's prose.** A
-  multi-line `git commit -m` will shred itself into pathspec errors, and a `cat << 'EOF'` with
-  backticks in the body fails to parse. Write the message to a file and use
-  `git commit -F <file>`; use the Edit tool for long doc appends.
+- **PowerShell mangles this project's prose.** `Set-Content` turned every em dash in a test
+  file into mojibake this session. Use the Edit tool for docs, and `git commit -F <file>` for
+  commit messages — a multi-line `-m` shreds itself into pathspec errors.
+- **Never `git stash` to test a revert.** It reverts the whole working tree, not the one file
+  you meant. Mutate the single line with an editor instead.
 - **.NET file APIs do not follow `Set-Location`.** Pass absolute paths, or prefer Read/Edit/Write.
-- **The launcher must keep CRLF line endings.** `.gitattributes` pins `*.cmd`/`*.bat`; don't
-  relax it.
-- **The bank is cached by the Cache API.** After `npm run build:bank`, an already-open page
-  keeps serving the old blob. Clear it in the console before re-testing:
-  `for (const k of await caches.keys()) await caches.delete(k)` then reload.
-- **Port 5184 is `strictPort`** — a stale dev server makes `npm run dev` fail rather than drift
-  to 5185. That is deliberate. Kill the old process.
-- **Dev-only handles at `window.__borgm1` and `window.__borgm1store`** (stripped from
-  production builds). The bridge gives you `noteOn`, `noteOff`, `setParam`, `previewParam`,
-  `setJoystick`, `setAftertouch`, `audioContext` and `outputNode` — attach an `AnalyserNode` to
-  `outputNode` and measure. That is how Phases 2 and 3 were verified.
-- **`.claude/launch.json`** exists, so the browser preview tooling can start the dev server by
-  name (`borgm1`).
+- **The launcher must keep CRLF.** `.gitattributes` pins `*.cmd`/`*.bat`; don't relax it.
+- **The bank is cached by the Cache API.** After `npm run build:bank`, clear it in the console
+  before re-testing: `for (const k of await caches.keys()) await caches.delete(k)` then reload.
+- **Port 5184 is `strictPort`** — a stale dev server fails loudly rather than drifting. Kill it.
+- **Dev-only handles at `window.__borgm1` and `window.__borgm1store`** (stripped from production
+  builds): `noteOn`, `noteOff`, `setParam`, `previewParam`, `setEffectType`, `setEffectParam`,
+  `setEffectBalance`, `setEffectRouting`, `setJoystick`, `setAftertouch`, `audioContext`,
+  `outputNode`. Attach an `AnalyserNode` to `outputNode` and measure — that is how Phases 2–4
+  were verified.
+- **If the in-app browser pane is hidden, its screenshots and synthetic clicks fail.** Driving
+  the page with the project's own Playwright (`@playwright/test` is already a dev dep) works
+  and gives you real pixels; `powerOn()` can also be called directly from the console handle.
 
 ## Do not
 
 - **Do not modify SynthStack** at `<sibling SynthStack repo>`. Fork source, read-only.
-- **Do not commit the bank.** `public/bank/` is generated and gitignored. Nor the SF2.
+- **Do not commit the bank** (`public/bank/`, generated and gitignored) or the SF2.
 - **Do not add runtime audio or UI libraries.** Build-time and test-only deps are fine.
 - **Do not put a PRNG in the signal path.** Its absence is what makes byte-exact golden-buffer
-  tests possible, and that is the sharpest test in the project. Note this bites in Phase 4:
-  the **breathing noise floor** is worth modelling, but derive it from the signal level, not
-  from `Math.random`.
-- **Do not re-litigate the settled decisions** in `DECISIONS.md` without reading the reasoning.
+  tests possible. Phase 4's DAC noise model is derived from signal level for exactly this
+  reason — copy that pattern if you need "analogue" behaviour.
+- **Do not rewrite `PresetPicker` or the MIDI bend/mod-wheel decode.** Both are built and
+  tested and merely unwired — see the last DECISIONS.md entry.
+- **Do not re-litigate settled decisions** without reading the reasoning.
 
 ## Where things stand
 
-552 unit tests, typecheck, build and bank build all clean. The bank builds to 50 MiB /
-480 samples / 594 key zones, 100 multisounds and 44 drums, with 451/451 loop seams within
-limit.
+908 unit tests, typecheck, build and bank build all clean. The bank builds to 50 MiB /
+480 samples / 594 key zones, 100 multisounds and 44 drums, 451/451 loop seams within limit.
 
-Known and deliberate: output is **mono** (Phase 4 fixes this), 39 multisounds and 12 drums are
-**approximated** from the nearest General MIDI timbre and flagged `approx`, there is **no
-browser and no WRITE** (Phase 6), and **DRUMS mode plays one drum per key** with unassigned
-keys silent — the four selectable Drum Kits are Phase 5/6.
+Known and deliberate: **39 multisounds and 12 drums are approximated** from the nearest GM
+timbre and flagged `approx`; there is **no browser and no WRITE** (Phase 6); **DRUMS mode plays
+one drum per key** with unassigned keys silent, and the four selectable Drum Kits are Phase 5/6
+work you may want to fold in.
 
-**One question left open by Phase 3, for your A/B to settle:** the manual says negative VDF
-cutoff keyboard tracking makes "the opposite" happen — cutoff falling as pitch rises — but the
-current mapping reaches *no* tracking at −99 and never inverts. The diagram is ambiguous and
-both readings are defensible, so it was left alone rather than changed on one sentence's
-reading. You will have a real recording in front of you; see the Phase 3 entry in
-`DECISIONS.md`.
+**Two open questions carried forward:**
+
+1. **The Phase 4 listening A/B was never done** — it needs the Robin S recording, which that
+   session could not obtain. Everything measurable was measured (RT60 3.61 s against a 3.5 s
+   setting, stereo correlation −0.06). If the sound is wrong, `DECISIONS.md` names the two
+   constants to move first: the per-effect EQ shelf corners and the chorus depth.
+2. **Negative VDF cutoff tracking is still unresolved**, from Phase 3. The manual says "the
+   opposite occurs"; the current mapping reaches *no* tracking at −99 and never inverts. I17
+   uses tracking `0`, so the gate patch exercised neither reading and could not settle it.
