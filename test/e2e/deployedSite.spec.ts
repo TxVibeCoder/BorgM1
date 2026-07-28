@@ -65,10 +65,16 @@ test.describe('deployed site', () => {
      */
     await page.addInitScript(() => {
       const w = window as unknown as { __an?: AnalyserNode; __tapped?: boolean };
-      const orig = AudioNode.prototype.connect;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      AudioNode.prototype.connect = function (this: AudioNode, ...args: any[]): any {
-        const result = orig.apply(this, args as never);
+      // `connect` is overloaded (AudioNode | AudioParam) and is being called reflectively
+      // here, so it is captured through one loose signature rather than fighting the
+      // overload set at two separate call sites.
+      type LooseConnect = (this: AudioNode, ...a: unknown[]) => unknown;
+      const orig = AudioNode.prototype.connect as unknown as LooseConnect;
+      (AudioNode.prototype as unknown as { connect: LooseConnect }).connect = function (
+        this: AudioNode,
+        ...args: unknown[]
+      ): unknown {
+        const result = orig.apply(this, args);
         try {
           if (!w.__tapped && args[0] === this.context.destination) {
             w.__tapped = true;
