@@ -16,6 +16,8 @@
  * input; the store is the only place that fact is handled.
  */
 
+import { coalesceProgramParams, defaultProgramParams } from '../../data/programParams';
+
 /** Tree schema version. Bump only on a BREAKING shape change; additive slices don't. */
 export const STATE_VERSION = 1;
 
@@ -112,7 +114,7 @@ export function defaultExtensionsState(): ExtensionsState {
 }
 
 export function defaultProgramState(): ProgramState {
-  return { name: 'INIT PROG', slot: null, params: {} };
+  return { name: 'INIT PROG', slot: null, params: defaultProgramParams() };
 }
 
 export function defaultTimbre(): TimbreState {
@@ -199,18 +201,21 @@ export function coalesceExtensionsState(raw: Partial<ExtensionsState> | undefine
   return { resonance: bool(raw?.resonance), insertFx: bool(raw?.insertFx) };
 }
 
-/** Drop any param whose value is not a finite number or a string — JSON-hostile values
- *  (NaN, Infinity, undefined, nested objects) would break the round-trip invariant. */
+/**
+ * Heal the program.
+ *
+ * Since Phase 3 the params bag is not a free-form map: it is the 143-byte SysEx table, so
+ * coalescing means filling every missing parameter from its default, clamping numbers into
+ * the range the manual gives them, and rejecting any enumerated value that is not a legal
+ * position. Unknown keys are DROPPED rather than carried, which also removes the last route
+ * for a JSON-hostile value (NaN, Infinity, a nested object) to reach the tree.
+ */
 export function coalesceProgramState(raw: Partial<ProgramState> | undefined): ProgramState {
-  const params: Record<string, number | string> = {};
-  const src = raw?.params;
-  if (src && typeof src === 'object') {
-    for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
-      if (typeof v === 'string') params[k] = v;
-      else if (typeof v === 'number' && Number.isFinite(v)) params[k] = v;
-    }
-  }
-  return { name: str(raw?.name, 'INIT PROG'), slot: nullableStr(raw?.slot), params };
+  return {
+    name: str(raw?.name, 'INIT PROG'),
+    slot: nullableStr(raw?.slot),
+    params: coalesceProgramParams(raw?.params),
+  };
 }
 
 export function coalesceTimbre(raw: Partial<TimbreState> | undefined): TimbreState {
@@ -299,6 +304,37 @@ export class M1Store {
     if (typeof value === 'number' && !Number.isFinite(value)) return;
     this.state.program.params[id] = value;
     this.emit();
+  }
+
+  setProgramName(name: string): void {
+    // 10 characters is the hardware's field width (bytes 0-9 of the record).
+    this.state.program.name = name.slice(0, 10);
+    this.emit();
+  }
+
+  /**
+   * Direct readers, for `useSyncExternalStore` snapshots.
+   *
+   * These deliberately do NOT go through `getState()`. That deep-copies through the JSON
+   * codec, so it returns a fresh object on every call — which would make every snapshot
+   * compare unequal and re-render all 139 panel controls on every knob movement. The deep
+   * copy is the right default for anyone taking a whole tree; it is the wrong thing on the
+   * hot path, so the hot path reads scalars straight out.
+   */
+  getProgramParam(id: string): number | string | undefined {
+    return this.state.program.params[id];
+  }
+
+  get oscMode(): string {
+    return String(this.state.program.params.OSC_MODE ?? 'SINGLE');
+  }
+
+  get programName(): string {
+    return this.state.program.name;
+  }
+
+  getExtension(id: keyof ExtensionsState): boolean {
+    return this.state.extensions[id];
   }
 
   subscribe(fn: Listener): () => void {

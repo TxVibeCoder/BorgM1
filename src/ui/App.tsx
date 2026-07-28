@@ -2,19 +2,29 @@
  * The shell. ONE 7:4 design-space stage (src/ui/stage.ts), scaled uniformly to fill the
  * window, with everything inside authored in design px.
  *
- * PHASE 2: playable. POWER unlocks the AudioContext and loads the bank; the keybed and
- * Web MIDI both drive the same engine bridge. The real panel arrives in Phase 3, laid out
- * from UI-SPEC's percentage table — this is deliberately a rig for hearing the engine, not
- * a draft of that panel.
+ * PHASE 3: the panel. Every one of the 139 program parameters is editable here and audible
+ * in the engine. The Phase 2 rig — a row of HTML `<select>`s under `.rig__*` — is gone
+ * entirely, as CONVENTIONS.md said it should be: it was a harness for hearing the engine,
+ * not a draft of this.
+ *
+ * Layout comes from UI-SPEC's percentage table via `panel/layout.ts`; nothing here places a
+ * control by hand.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import './styles.css';
+import { REGIONS, PAGE_LAYOUTS, flowSections, type PageId } from './panel/layout';
 import { STAGE } from './stage';
 import { ErrorOverlay } from './ErrorOverlay';
+import { AmpEgGraph, FilterEgGraph } from './panel/EgGraph';
+import { Header, TabStrip } from './panel/Header';
+import { Joystick } from './panel/Joystick';
+import { Section } from './panel/Section';
 import { KeyboardPanel } from './keyboard/KeyboardPanel';
 import { engineBridge, type BridgeStatus } from '../engine/engineBridge';
+import { useOsc2Enabled } from './useControl';
 import { WebMidiInput, type MidiStatus } from './midi/webMidiInput';
+import { COLORS } from './theme';
 
 /** One MIDI input for the app. Outside React — it owns a permission prompt and devices. */
 const midi = new WebMidiInput();
@@ -35,9 +45,11 @@ export function App() {
     ),
   );
   const [status, setStatus] = useState<BridgeStatus>(() => engineBridge.getStatus());
+  const [page, setPage] = useState<PageId>('EASY');
   const [octave, setOctave] = useState(0);
   const [midiStatus, setMidiStatus] = useState<MidiStatus | null>(null);
   const [, forceRender] = useState(0);
+  const osc2Enabled = useOsc2Enabled();
 
   useEffect(() => {
     const onResize = () => setScale(computeScale(window.innerWidth, window.innerHeight));
@@ -71,7 +83,24 @@ export function App() {
       .then(setMidiStatus);
   }, [status.powered, noteOn, noteOff]);
 
-  const multisounds = engineBridge.multisounds;
+  const layout = PAGE_LAYOUTS[page];
+  const leftBoxes = useMemo(() => flowSections(layout.left, REGIONS.left), [layout]);
+  const centreBoxes = useMemo(() => flowSections(layout.centre, REGIONS.centre), [layout]);
+
+  const statusText = status.bankError
+    ? `BANK ERROR: ${status.bankError}`
+    : status.bankLoaded
+      ? 'BANK OK'
+      : status.powered
+        ? 'LOADING BANK…'
+        : 'POWER OFF';
+
+  // The right column is the two EG graphs, stacked. UI-SPEC §3: each is ~22% of window
+  // height, and they show whichever oscillator is selected by the `1`/`2` rule — here both
+  // are drawn for oscillator 1, with oscillator 2's pair greying in SINGLE mode.
+  const egH = (REGIONS.right.h - 12) / 2;
+  const egTop = { ...REGIONS.right, h: egH };
+  const egBottom = { ...REGIONS.right, y: REGIONS.right.y + egH + 12, h: egH };
 
   return (
     <>
@@ -81,51 +110,81 @@ export function App() {
           data-testid="stage"
           style={{ width: STAGE.w, height: STAGE.h, transform: `scale(${scale})` }}
         >
-          <div className="rig">
-            <div className="rig__row">
-              <button
-                type="button"
-                className="rig__power"
-                data-testid="power"
-                onClick={() => {
-                  if (status.powered) void engineBridge.powerOff();
-                  else void engineBridge.powerOn();
-                }}
-              >
-                <span className={status.powered ? 'power-lamp power-lamp--on' : 'power-lamp power-lamp--off'} />
-                POWER
-              </button>
+          <svg
+            width={STAGE.w}
+            height={STAGE.h}
+            viewBox={`0 0 ${STAGE.w} ${STAGE.h}`}
+            role="group"
+            aria-label="BorgM1 program panel"
+          >
+            {/* Chassis. UI-SPEC §7's single most important structural finding: the chassis is
+                cool-tinted and the modules are perfectly neutral. That two-temperature split
+                is what makes the panels read as separate physical parts. */}
+            <rect x={0} y={0} width={STAGE.w} height={STAGE.h} fill={COLORS.bg} />
+            <rect
+              x={6}
+              y={6}
+              width={STAGE.w - 12}
+              height={STAGE.h - 12}
+              rx={10}
+              fill={COLORS.panelRaised}
+              stroke={COLORS.panelEdge}
+              strokeWidth={2}
+            />
 
-              <label className="rig__field">
-                SOUND
-                <select
-                  data-testid="multisound"
-                  disabled={!status.bankLoaded}
-                  value={status.multisound}
-                  onChange={(e) => engineBridge.setMultisound(Number(e.target.value))}
-                >
-                  {multisounds.map((m) => (
-                    <option key={m.index} value={m.index}>
-                      {String(m.index).padStart(2, '0')} {m.name}
-                      {m.approx ? ' ~' : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <Header
+              box={REGIONS.header}
+              powered={status.powered}
+              statusText={statusText}
+              onPower={() => {
+                if (status.powered) void engineBridge.powerOff();
+                else void engineBridge.powerOn();
+              }}
+            />
+            <TabStrip box={REGIONS.tabs} page={page} onSelect={setPage} />
 
-              <label className="rig__field">
-                OSC
-                <select
-                  data-testid="osc-mode"
-                  value={status.oscMode}
-                  onChange={(e) => engineBridge.setOscMode(e.target.value as 'SINGLE' | 'DOUBLE')}
-                >
-                  <option value="SINGLE">SINGLE</option>
-                  <option value="DOUBLE">DOUBLE</option>
-                </select>
-              </label>
+            {layout.left.map((section, i) => (
+              <Section
+                key={`${page}-l-${section.title}`}
+                section={section}
+                box={leftBoxes[i]!}
+                osc2Enabled={osc2Enabled}
+              />
+            ))}
+            {layout.centre.map((section, i) => (
+              <Section
+                key={`${page}-c-${section.title}`}
+                section={section}
+                box={centreBoxes[i]!}
+                osc2Enabled={osc2Enabled}
+              />
+            ))}
 
-              <label className="rig__field">
+            {/* TWO EG components, never one — the filter EG releases to a level and the amp
+                EG cannot. See panel/EgGraph.tsx. */}
+            <FilterEgGraph box={egTop} osc={1} enabled />
+            <AmpEgGraph box={egBottom} osc={1} enabled />
+          </svg>
+
+          <div className="panel-keys">
+            <svg
+              className="panel-keys__wheels"
+              width={REGIONS.keyboard.h}
+              height={REGIONS.keyboard.h}
+              viewBox={`0 0 ${REGIONS.keyboard.h} ${REGIONS.keyboard.h}`}
+            >
+              <Joystick box={{ x: 0, y: 0, w: REGIONS.keyboard.h, h: REGIONS.keyboard.h - 26 }} />
+            </svg>
+            <div className="panel-keys__bed">
+              <KeyboardPanel
+                octave={octave}
+                held={engineBridge.heldNotes}
+                onNoteOn={noteOn}
+                onNoteOff={noteOff}
+              />
+            </div>
+            <div className="panel-keys__aside">
+              <label className="panel-octave">
                 OCTAVE
                 <select value={octave} onChange={(e) => setOctave(Number(e.target.value))}>
                   {[-2, -1, 0, 1, 2].map((o) => (
@@ -135,33 +194,12 @@ export function App() {
                   ))}
                 </select>
               </label>
-
-              <span className="rig__status" data-testid="bank-status">
-                {status.bankError
-                  ? `BANK ERROR: ${status.bankError}`
-                  : status.bankLoaded
-                    ? `BANK OK · ${multisounds.length} sounds`
-                    : status.powered
-                      ? 'LOADING BANK…'
-                      : 'POWER OFF'}
+              <span className="panel-midi" data-testid="bank-status">
+                {midiStatus
+                  ? `MIDI ${midiStatus.state}${midiStatus.deviceCount ? ` · ${midiStatus.deviceNames.join(', ')}` : ''}`
+                  : statusText}
               </span>
             </div>
-
-            <div className="rig__keys">
-              <KeyboardPanel
-                octave={octave}
-                held={engineBridge.heldNotes}
-                onNoteOn={noteOn}
-                onNoteOff={noteOff}
-              />
-            </div>
-
-            <p className="rig__hint">
-              Phase 2 · voice engine. A tilde marks a sound approximated from General MIDI.
-              {midiStatus
-                ? ` · MIDI ${midiStatus.state}${midiStatus.deviceCount ? ` (${midiStatus.deviceNames.join(', ')})` : ''}`
-                : ''}
-            </p>
           </div>
         </main>
       </div>

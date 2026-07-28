@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { defaultProgramParams, PROGRAM_PARAMS } from '../../data/programParams';
 import {
   coalesceCombiState,
   coalesceExtensionsState,
@@ -49,11 +50,14 @@ describe('state round-trip', () => {
     store.setMode('COMBI');
     store.setMasterVolume(0.42);
     store.setExtension('resonance', true);
-    store.setProgramParam('VDF_CUTOFF', 76);
+    store.setProgramParam('OSC1_VDF_CUTOFF', 76);
     store.setProgramParam('OSC_MODE', 'DOUBLE');
     const s = store.getState();
     const restored = new M1Store(JSON.parse(JSON.stringify(s)));
     expect(restored.getState()).toEqual(s);
+    // The edits survive the trip, not just the shape.
+    expect(restored.getState().program.params.OSC1_VDF_CUTOFF).toBe(76);
+    expect(restored.getState().program.params.OSC_MODE).toBe('DOUBLE');
   });
 
   it('getState() is a deep copy — mutating it cannot reach into the store', () => {
@@ -163,12 +167,15 @@ describe('coalesce', () => {
     expect(coalesceKeyboardState(undefined)).toEqual({ octave: 0, midiChannel: -1 });
   });
 
-  it('coalesceProgramState drops JSON-hostile param values and keeps the rest', () => {
+  it('coalesceProgramState keeps valid params, heals the rest, and drops unknowns', () => {
+    // Since Phase 3 the params bag IS the 143-byte SysEx table, not a free-form map: every
+    // known parameter is present afterwards, unknown keys are dropped, and JSON-hostile
+    // values can no longer reach the tree at all.
     const raw = {
       name: 'Organ 2',
       slot: 'I17',
       params: {
-        VDF_CUTOFF: 99,
+        OSC1_VDF_CUTOFF: 99,
         OSC_MODE: 'DOUBLE',
         BAD_INF: Infinity,
         BAD_NAN: NaN,
@@ -179,16 +186,20 @@ describe('coalesce', () => {
     const p = coalesceProgramState(raw);
     expect(p.name).toBe('Organ 2');
     expect(p.slot).toBe('I17');
-    expect(p.params).toEqual({ VDF_CUTOFF: 99, OSC_MODE: 'DOUBLE' });
+    expect(p.params.OSC1_VDF_CUTOFF).toBe(99);
+    expect(p.params.OSC_MODE).toBe('DOUBLE');
+    for (const bad of ['BAD_INF', 'BAD_NAN', 'BAD_OBJ', 'BAD_UNDEF']) {
+      expect(p.params[bad], bad).toBeUndefined();
+    }
+    expect(Object.keys(p.params)).toHaveLength(PROGRAM_PARAMS.length);
     expect(JSON.parse(JSON.stringify(p))).toEqual(p);
   });
 
   it('coalesceProgramState defaults a missing name and a non-string slot', () => {
-    expect(coalesceProgramState(undefined)).toEqual({
-      name: 'INIT PROG',
-      slot: null,
-      params: {},
-    });
+    const healed = coalesceProgramState(undefined);
+    expect(healed.name).toBe('INIT PROG');
+    expect(healed.slot).toBeNull();
+    expect(healed.params).toEqual(defaultProgramParams());
     const badSlot = { slot: 42 } as unknown as Parameters<typeof coalesceProgramState>[0];
     expect(coalesceProgramState(badSlot).slot).toBeNull();
   });

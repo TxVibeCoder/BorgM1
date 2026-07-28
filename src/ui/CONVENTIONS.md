@@ -6,13 +6,25 @@ coordinates are SVG viewBox units that map 1:1 to stage px — every panel's vie
 its stage region (`stage.ts`; the stage itself is a 1400×800 **7:4** design box, uniformly
 scaled to the window by `App.tsx`).
 
-> **What exists today (end of Phase 2):** the stage transform, `theme.ts`, `types.ts`, the four
-> SVG controls, the keybed, and a deliberately plain **rig** in `App.tsx` — power, sound select,
-> osc mode, octave. The rig is a harness for hearing the engine, not a draft of the panel; none
-> of its `.rig__*` classes should survive Phase 3.
+> **What exists today (end of Phase 3):** the stage transform, `theme.ts`, `types.ts`, the four
+> SVG controls, the keybed, and the **panel** — `panel/layout.ts` (regions + the five page
+> definitions), `panel/Section.tsx`, `panel/ParamControl.tsx`, the two `panel/EgGraph.tsx`
+> components, `panel/Header.tsx`, `panel/Joystick.tsx`, and `useControl.ts`. The Phase 2 rig
+> and every `.rig__*` class are gone, as this note said they should be.
 >
-> **Not built yet:** the panel regions, `useControl`, and the EG graph components. The data-flow
-> rules below are the contract Phase 3 builds *to*, not a description of running code.
+> The data-flow rules below are now a description of running code. Two additions worth knowing
+> before you touch the panel:
+>
+> - **The drag path does not write the store.** `engineBridge.previewParam` pushes the engine
+>   only; `setParam` commits. A knob fires `onInput` per pointermove and a store write notifies
+>   every subscriber, so routing the drag through the store re-renders 139 controls per frame.
+> - **`useControl` reads scalars, never `getState()`.** `getState()` deep-copies through the
+>   JSON codec, so as a `useSyncExternalStore` snapshot it returns a fresh object every call and
+>   defeats the `Object.is` bail-out entirely. The store exposes `getProgramParam`,
+>   `programName` and `getExtension` for exactly this.
+>
+> **Not built yet:** the Phase 6 browser modal, the Combination timbre strip (Phase 5), and the
+> insert-FX rack (Phase 4).
 
 ## Data flow — non-negotiable
 

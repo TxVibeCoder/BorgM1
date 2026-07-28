@@ -115,97 +115,72 @@ body {
 }
 
 /*
- * PHASE 2 RIG. A deliberately plain harness for hearing the engine: power, sound select,
- * osc mode, octave, keybed. The real panel arrives in Phase 3 from UI-SPEC's percentage
- * table; nothing here is a draft of it, so none of these classes should survive.
+ * PHASE 3 KEYBOARD BAND (UI-SPEC §6, 82-100% of window height).
+ *
+ * The panel itself is one SVG covering the whole stage; only this band is HTML, because the
+ * keybed is an existing component and the octave control is a real form control. It sits on
+ * top of the SVG at the band's coordinates.
  */
-.rig {
+.panel-keys {
   position: absolute;
-  inset: 40px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 18%;
   display: flex;
-  flex-direction: column;
-  gap: 26px;
-  padding: 28px;
+  align-items: center;
+  gap: 14px;
+  padding: 0 22px 10px;
   box-sizing: border-box;
-  border: 1px solid var(--color-panel-edge);
-  border-radius: 10px;
-  background: var(--color-panel);
 }
 
-.rig__row {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  flex-wrap: wrap;
-  font-family: var(--font-condensed);
-  font-size: 15px;
-  letter-spacing: 2px;
-  color: var(--color-legend);
+.panel-keys__wheels {
+  flex: none;
 }
 
-.rig__power {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 20px;
-  font-family: var(--font-condensed);
-  font-size: 15px;
-  letter-spacing: 2px;
-  color: var(--color-legend);
-  background: var(--color-panel-raised);
-  border: 1px solid var(--color-panel-edge);
-  border-radius: 7px;
-  cursor: pointer;
-}
-
-.rig__power:hover {
-  border-color: var(--color-focus);
-}
-
-/* The lamp is a plain element here, not the SVG circle the panel will use. */
-.rig__power .power-lamp {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--color-led-off);
-}
-
-.rig__power .power-lamp--on {
-  background: var(--color-led-red);
-  box-shadow: 0 0 7px var(--color-led-red);
-}
-
-.rig__field {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-legend-dim);
-}
-
-.rig__field select {
-  font-family: var(--font-stack);
-  font-size: 14px;
-  letter-spacing: 0;
-  padding: 7px 10px;
-  color: var(--color-legend);
-  background: var(--color-panel-shadow);
-  border: 1px solid var(--color-panel-edge);
-  border-radius: 6px;
-  max-width: 260px;
-}
-
-.rig__status {
-  margin-left: auto;
-  font-size: 13px;
-  color: var(--color-legend-dim);
-}
-
-.rig__keys {
+.panel-keys__bed {
   flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 0;
+  min-width: 0;
+}
+
+.panel-keys__aside {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  width: 150px;
+}
+
+.panel-octave {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-condensed);
+  font-size: 11px;
+  letter-spacing: 1.4px;
+  color: var(--color-legend-dim);
+}
+
+.panel-octave select {
+  font-family: var(--font-stack);
+  font-size: 13px;
+  letter-spacing: 0;
+  padding: 4px 6px;
+  color: var(--color-legend);
+  background: var(--color-panel-shadow);
+  border: 1px solid var(--color-panel-edge);
+  border-radius: 5px;
+}
+
+.panel-midi {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--color-legend-dim);
+  text-align: right;
 }
 
 .keybed {
@@ -213,13 +188,6 @@ body {
   max-width: 1180px;
   height: auto;
   touch-action: none;
-}
-
-.rig__hint {
-  margin: 0;
-  font-size: 13px;
-  letter-spacing: 1px;
-  color: var(--color-legend-dim);
 }
 
 /* Phase 0 placeholder — replaced by the real panel in Phase 3. */
