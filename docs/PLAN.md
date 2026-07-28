@@ -9,18 +9,19 @@ plumbing. Estimates are focused sessions (roughly a working day).
 | 1 | Sample pipeline | ✅ **done** | 1.5–2 | A built sample bank on disk |
 | 2 | Voice engine | ✅ **done** | 2–3 | **Polyphonic playing from the keyboard** |
 | 3 | Program layer + panel UI | ✅ **done** | 2–3 | Every parameter editable and audible |
-| 4 | Effects | ◀ **next** | 3–4 | **First fidelity gate — `I17 Organ 2` by hand** |
-| 5 | Combinations | | 1.5–2 | 8-timbre splits and velocity switches |
+| 4 | Effects | ✅ **done** | 3–4 | **First fidelity gate — `I17 Organ 2` by hand** |
+| 5 | Combinations | ◀ **next** | 1.5–2 | 8-timbre splits and velocity switches |
 | 6 | Browser + factory bank | | 1–1.5 | **All 100 factory programs, loadable** |
 | 7 | Sequencer *(decide after 6)* | | 2–3 | 8-track recording and playback |
 
 **Phases 0–6 = ~12–16 sessions and a complete instrument.** Phase 7 is a separate decision.
 
 **Where things stand:** the instrument plays 16-voice polyphonic multisamples (8 in DOUBLE) from
-the on-screen keybed and over Web MIDI, with all 100 multisounds selectable, and **all 139
-program parameters are editable on a five-page panel and audible in the engine**. 552 unit
-tests, typecheck, build and bank build all clean. What is *not* built yet: effects,
-Combinations, and the browser.
+the on-screen keybed and over Web MIDI, with all 100 multisounds selectable, **all 139 program
+parameters editable on a six-page panel and audible in the engine**, and **all 33 effect
+algorithms in a two-slot master section with real routing** — so the output is now stereo. 908
+unit tests, typecheck, build and bank build all clean. What is *not* built yet: Combinations
+and the browser.
 
 Every phase's decisions are recorded dated in `DECISIONS.md`; the notes below are the plan as
 written, kept intact so the plan and its outcome can be compared.
@@ -262,6 +263,38 @@ filter and amp envelopes, Stereo Chorus 1 at depth 99 with EQ +12/+12, into a 3.
 > character is sample + chorus + EQ + hall. If it doesn't match, the problem is unambiguous.
 > Korg's own emulation had wet levels globally too hot — SOS had to drop reverb from 18 to 13.
 > **Measure, don't eyeball.**
+
+**Outcome.** All 33 algorithms plus Through, the two-slot matrix, the routing bit and the panel
+page. Engine output is now **stereo**. 908 unit tests, typecheck, build and bank build clean.
+
+The spec was where PLAN.md said, and **checking it mattered more than finding it**. Two further
+sources carried things p.129 does not: the M1R manual's **pp.56-57 default-values chart** (the
+official names, every default, and the asterisks behind the pairing rule) and **Korg's own
+factory bank**, now histogrammed by `npm run probe:effects`. The data settled three questions
+p.129 left ambiguous — the type byte is the effect number **minus one**, MG-Status bit1 is
+**editable data** and is what separates the `I`/`II` variants, and for the dual algorithms
+26-33 a slot's two balance bytes are the two **halves'** dry:wet rather than a left/right pair.
+Each is recorded with its evidence in `DECISIONS.md`; the last two split the factory bank
+51-of-54 and 196/196-vs-4/4 respectively, so none of them is a judgement call.
+
+**PLAN.md's own description of the gate patch was wrong in four audible ways**, which the
+decoded record corrected: `I17 Organ 2` is at **16'** not 8', **level 30** not 70, **cutoff 70
+with tracking 0** not wide open, and amp release 4 not 25. Its envelopes do nothing, as stated —
+but a patch built from "defaults plus Organ2 plus effects" would have missed all four, and
+Korg's low oscillator level is what keeps a 60%-wet chorus with +12/+12 EQ inside headroom.
+
+Measured, extensions off: **RT60 3.61 s against a 3.5 s setting**, decay linear in dB across
+3 s; **stereo correlation −0.06** from a mono source; four-note chord peaks 0.72 pre-master.
+**The listening half of the gate is not closed** — the A/B needs the recording, which the
+session could not obtain. A normalised 7.17 s WAV of the patch was rendered so it can be done
+by ear; if it misses, `DECISIONS.md` names the two constants to move first.
+
+**One bug that 900 tests could not see, found by driving the app**: grid-snapping silently
+rewrote `PHASE '180'` to `'0'`, turning every `I` variant into its `II` — because encode
+returned a bit VALUE where decode read a bit POSITION, and only the snapper round-tripped
+through both. Fixed by making them exact inverses, and the test added asserts the general form
+(snapping is identity and idempotent for every parameter of every algorithm) rather than the
+instance.
 
 ---
 

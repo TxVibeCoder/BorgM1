@@ -16,6 +16,17 @@
  * input; the store is the only place that fact is handled.
  */
 
+import {
+  coalesceEffectsState,
+  defaultEffectParams,
+  defaultEffectsState,
+  effectAlgorithm,
+  effectPairAllowed,
+  snapEffectParam,
+  EFFECT_COUNT,
+  type EffectSlotState,
+  type EffectsState,
+} from '../../data/effectParams';
 import { coalesceProgramParams, defaultProgramParams } from '../../data/programParams';
 
 /** Tree schema version. Bump only on a BREAKING shape change; additive slices don't. */
@@ -61,6 +72,16 @@ export interface ProgramState {
   /** Factory/user bank slot this was loaded from, or null for an unsaved edit. */
   slot: string | null;
   params: Record<string, number | string>;
+  /**
+   * Bytes 38-62 of the same 143-byte record — the two effect slots and their routing.
+   *
+   * Kept OUT of `params` rather than folded into it, because a slot's parameter set depends
+   * on which of the 33 algorithms it holds: a flat `id -> value` bag would have to carry all
+   * 33 algorithms' parameters at once, or lose them on every type change. The hardware itself
+   * resets an effect's parameters when its type changes (manual p.56), so a slot only ever
+   * needs the current algorithm's.
+   */
+  effects: EffectsState;
 }
 
 /** One Combination timbre. Phase 5 fills this out; the shell pins the shape. */
@@ -114,7 +135,12 @@ export function defaultExtensionsState(): ExtensionsState {
 }
 
 export function defaultProgramState(): ProgramState {
-  return { name: 'INIT PROG', slot: null, params: defaultProgramParams() };
+  return {
+    name: 'INIT PROG',
+    slot: null,
+    params: defaultProgramParams(),
+    effects: defaultEffectsState(),
+  };
 }
 
 export function defaultTimbre(): TimbreState {
@@ -215,6 +241,7 @@ export function coalesceProgramState(raw: Partial<ProgramState> | undefined): Pr
     name: str(raw?.name, 'INIT PROG'),
     slot: nullableStr(raw?.slot),
     params: coalesceProgramParams(raw?.params),
+    effects: coalesceEffectsState(raw?.effects),
   };
 }
 
@@ -310,6 +337,76 @@ export class M1Store {
     // 10 characters is the hardware's field width (bytes 0-9 of the record).
     this.state.program.name = name.slice(0, 10);
     this.emit();
+  }
+
+  // ---- effects ----------------------------------------------------------------------
+  //
+  // Kept here rather than in the params bag for the reason ProgramState.effects documents:
+  // a slot's parameter set depends on its algorithm.
+
+  /**
+   * Select an algorithm for a slot. RESETS that slot's parameters and balances to the
+   * algorithm's defaults, which is the hardware's own behaviour (manual p.56: "When
+   * selecting the effect type again, effect parameters will be set to the default value").
+   *
+   * Returns false and changes nothing if the pairing restriction forbids it — Symphonic
+   * Ensemble and Rotary Speaker cannot sit opposite an asterisked modulation effect. The UI
+   * greys those entries, but enforcing it here too means MIDI and a loaded bundle cannot
+   * route around the panel.
+   */
+  setEffectType(slot: 1 | 2, type: number): boolean {
+    const other = this.state.program.effects.slots[slot === 1 ? 1 : 0].type;
+    const t = Math.min(EFFECT_COUNT, Math.max(0, Math.round(type)));
+    if (!effectPairAllowed(t, other)) return false;
+    const algo = effectAlgorithm(t);
+    this.state.program.effects.slots[slot - 1] = {
+      type: t,
+      balanceA: algo?.defaultBalance[0] ?? 0,
+      balanceB: algo?.defaultBalance[1] ?? 0,
+      params: defaultEffectParams(t),
+    };
+    this.emit();
+    return true;
+  }
+
+  /** Snaps onto the hardware's quantization grid on the way in — see `snapEffectParam`. */
+  setEffectParam(slot: 1 | 2, id: string, value: number | string): void {
+    if (typeof value === 'number' && !Number.isFinite(value)) return;
+    const s = this.state.program.effects.slots[slot - 1]!;
+    s.params[id] = snapEffectParam(s.type, id, value);
+    this.emit();
+  }
+
+  /** Wet percent, 0..100. `which` is A or B — for effects 26-33 those are the two halves. */
+  setEffectBalance(slot: 1 | 2, which: 'A' | 'B', value: number): void {
+    const v = int(value, 0, 0, 100);
+    const s = this.state.program.effects.slots[slot - 1]!;
+    if (which === 'A') s.balanceA = v;
+    else s.balanceB = v;
+    this.emit();
+  }
+
+  setEffectRouting(serial: boolean): void {
+    this.state.program.effects.serial = serial === true;
+    this.emit();
+  }
+
+  setEffectIo(id: 'fx1L' | 'fx1R' | 'fx2L' | 'fx2R', on: boolean): void {
+    this.state.program.effects[id] = on === true;
+    this.emit();
+  }
+
+  /** Direct reader for `useSyncExternalStore`, same reasoning as `getProgramParam`. */
+  getEffectSlot(slot: 1 | 2): EffectSlotState {
+    return this.state.program.effects.slots[slot - 1]!;
+  }
+
+  getEffectParam(slot: 1 | 2, id: string): number | string | undefined {
+    return this.state.program.effects.slots[slot - 1]!.params[id];
+  }
+
+  get effects(): EffectsState {
+    return this.state.program.effects;
   }
 
   /**

@@ -30,9 +30,21 @@ export const REGIONS = {
   keyboard: pctRect(0, 82, 100, 18),
 } as const;
 
-/** The edit pages. UI-SPEC §5: `EASY` is a curated subset, not a section. */
-export const PAGES = ['EASY', 'OSC', 'FILTER', 'AMP', 'CONTROL'] as const;
+/**
+ * The edit pages. UI-SPEC §5: `EASY` is a curated subset, not a section.
+ *
+ * `FX` is Phase 4's, and it is the one page whose sections are NOT `ParamSection`s — an
+ * effect slot's parameter list depends on which of the 33 algorithms it holds, so it is
+ * declared by `EffectSection.tsx` at render time instead. `PAGE_LAYOUTS` therefore has no
+ * entry for it; `App.tsx` branches once, which is cheaper than making every other page carry
+ * a discriminated union it never uses.
+ */
+export const PAGES = ['EASY', 'OSC', 'FILTER', 'AMP', 'CONTROL', 'FX'] as const;
 export type PageId = (typeof PAGES)[number];
+
+/** Pages driven by a declared parameter list. `FX` is the exception — see PAGES. */
+export type ParamPageId = Exclude<PageId, 'FX'>;
+export const PARAM_PAGES: ParamPageId[] = PAGES.filter((p): p is ParamPageId => p !== 'FX');
 
 export interface ParamSection {
   title: string;
@@ -208,7 +220,7 @@ const OSC_SOURCE: ParamSection = {
   params: ['MULTISOUND', 'OCTAVE', 'VDA_LEVEL'],
 };
 
-export const PAGE_LAYOUTS: Record<PageId, PageLayout> = {
+export const PAGE_LAYOUTS: Record<ParamPageId, PageLayout> = {
   // UI-SPEC §5: EASY shows OSC, FILTER and both EG graphs at once. It is the page that
   // makes a 143-parameter instrument approachable, so it holds a subset, not a summary.
   EASY: { left: [OSC_BASIC, EASY_OSC], centre: [EASY_TONE, EASY_ENV], right: 'egs' },

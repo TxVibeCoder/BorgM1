@@ -19,12 +19,13 @@ not a dependency — the build does not read it.
 | The 143-byte Program Parameter table, all 139 parameters | `data/programParams.ts` | 3 |
 | The EG-time bitfield packing (enable and polarity are separate bits) | `data/programParams.ts`, `dsp/modCore.ts` | 3 |
 | Cutoff keyboard tracking: 0 means 100%, confirmed verbatim | `dsp/lowpassCore.ts` | 3 |
+| The 25-byte effect block, all 33 algorithms and their quantization grids | `data/effectParams.ts` | 4 |
+| The effect NAMES, per-algorithm DEFAULTS and the asterisk pairing rule | `data/effectParams.ts` | 4 |
 
 **Still to extract**, in the phase that needs it:
 
 | Not yet extracted | Needed by |
 |---|---|
-| The 33 effect algorithms and their quantization grids | Phase 4 |
 | The 124-byte Combination table | Phase 5 |
 | `preload/final.py` — the 100 factory programs and 100 combinations | Phase 6 |
 

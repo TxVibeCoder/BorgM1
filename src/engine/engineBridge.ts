@@ -13,6 +13,7 @@
  * INDEX into actual PCM, and getting the result across to the worklet.
  */
 
+import { snapEffectParam } from '../../data/effectParams';
 import { loadBank, type BankMultisound, type LoadedBank } from './bankLoader';
 import { StudioContext } from './context';
 import { buildProgramConfig, type OscSource } from './program/programConfigCore';
@@ -82,7 +83,7 @@ class EngineBridge {
     }
     this.emit({ powered: true });
     if (!this.bank) await this.ensureBank();
-    else this.pushProgram();
+    else this.refresh();
   }
 
   async powerOff(): Promise<void> {
@@ -103,7 +104,7 @@ class EngineBridge {
       const pcm = this.bank.pcm;
       this.node?.port.postMessage({ type: 'bank', pcm }, [pcm.buffer]);
       this.emit({ bankLoaded: true, bankError: null });
-      this.pushProgram();
+      this.refresh();
     } catch (err) {
       this.emit({ bankLoaded: false, bankError: err instanceof Error ? err.message : String(err) });
     }
@@ -151,6 +152,83 @@ class EngineBridge {
   setResonance(on: boolean): void {
     m1Store.setExtension('resonance', on);
     this.pushProgram();
+  }
+
+  // ---- effects ----------------------------------------------------------------------------
+  //
+  // Pushed SEPARATELY from the program, not folded into it. A program push carries two 32 KB
+  // keymaps; the effect section is a few dozen numbers, and turning a reverb knob has no
+  // reason to move 64 KB. The two are independent on the wire for the same reason the
+  // keymaps are cached.
+
+  /**
+   * Select an algorithm. Returns false if the pairing restriction forbids it — Symphonic
+   * Ensemble and Rotary Speaker cannot sit opposite an asterisked modulation effect.
+   */
+  setEffectType(slot: 1 | 2, type: number): boolean {
+    const ok = m1Store.setEffectType(slot, type);
+    if (ok) this.pushEffects();
+    return ok;
+  }
+
+  setEffectParam(slot: 1 | 2, id: string, value: number | string): void {
+    this.pendingEffects.delete(`${slot}:${id}`);
+    m1Store.setEffectParam(slot, id, value);
+    this.pushEffects();
+  }
+
+  /**
+   * The drag path, exactly as `previewParam` is for program parameters — and it SNAPS.
+   * The store snaps on commit; without snapping here too, the whole quantization grid would
+   * exist everywhere except while you were actually turning the knob.
+   */
+  previewEffectParam(slot: 1 | 2, id: string, value: number | string): void {
+    const type = m1Store.getEffectSlot(slot).type;
+    this.pendingEffects.set(`${slot}:${id}`, snapEffectParam(type, id, value));
+    this.pushEffects();
+  }
+
+  setEffectBalance(slot: 1 | 2, which: 'A' | 'B', value: number): void {
+    this.pendingBalance.delete(`${slot}:${which}`);
+    m1Store.setEffectBalance(slot, which, value);
+    this.pushEffects();
+  }
+
+  previewEffectBalance(slot: 1 | 2, which: 'A' | 'B', value: number): void {
+    this.pendingBalance.set(`${slot}:${which}`, value);
+    this.pushEffects();
+  }
+
+  setEffectRouting(serial: boolean): void {
+    m1Store.setEffectRouting(serial);
+    this.pushEffects();
+  }
+
+  setEffectIo(id: 'fx1L' | 'fx1R' | 'fx2L' | 'fx2R', on: boolean): void {
+    m1Store.setEffectIo(id, on);
+    this.pushEffects();
+  }
+
+  /** Mid-drag effect values, same contract as `pending` for program parameters. */
+  private readonly pendingEffects = new Map<string, number | string>();
+  private readonly pendingBalance = new Map<string, number>();
+
+  private pushEffects(): void {
+    if (!this.node) return;
+    const effects = m1Store.getState().program.effects;
+    if (this.pendingEffects.size > 0 || this.pendingBalance.size > 0) {
+      for (const [key, value] of this.pendingEffects) {
+        const [slot, id] = splitPending(key);
+        effects.slots[slot - 1]!.params[id] = value;
+      }
+      for (const [key, value] of this.pendingBalance) {
+        const [slot, which] = splitPending(key);
+        const s = effects.slots[slot - 1]!;
+        if (which === 'A') s.balanceA = value;
+        else s.balanceB = value;
+      }
+    }
+    this.node.port.postMessage({ type: 'effects', effects });
   }
 
   private sampleOf(id: string): SerializedSample | null {
@@ -254,6 +332,7 @@ class EngineBridge {
   /** Re-push after something outside the params bag changed (bank load, extension toggle). */
   refresh(): void {
     this.pushProgram();
+    this.pushEffects();
   }
 
   // ---- performance ------------------------------------------------------------------------
@@ -287,6 +366,13 @@ class EngineBridge {
     this.heldNotes.clear();
     this.node?.port.postMessage({ type: 'allNotesOff' });
   }
+}
+
+/** `"1:DEPTH"` -> `[1, 'DEPTH']`. The pending maps are keyed by slot so the two cannot mix. */
+function splitPending(key: string): [1 | 2, string] {
+  const i = key.indexOf(':');
+  const slot = key.slice(0, i) === '2' ? 2 : 1;
+  return [slot, key.slice(i + 1)];
 }
 
 export const engineBridge = new EngineBridge();

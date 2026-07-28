@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "build:bank": "tsx scripts/buildBank.ts",
-    "probe:sf2": "tsx scripts/probeSf2.ts"
+    "probe:sf2": "tsx scripts/probeSf2.ts",
+    "probe:effects": "tsx scripts/probeEffects.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

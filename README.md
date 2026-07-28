@@ -7,11 +7,12 @@ envelopes, a 33-algorithm effects section, 8-timbre Combinations, and (optionall
 sequencer. Korg's official factory bank has been decoded, so the 100 factory programs and 100
 combinations are **importable, not reconstructable**.
 
-**Status: Phases 0–3 complete — it plays and it edits.** 16-voice polyphony (8 in DOUBLE) from
-the on-screen keybed or over Web MIDI, all 100 multisounds selectable, and all **139 program
-parameters** editable on a five-page panel and audible in the engine. One command builds the
-sample bank. 552 tests green. Phase 4 — the effects section and the first fidelity gate — is
-next.
+**Status: Phases 0–4 complete — it plays, it edits, and it has its effects.** 16-voice polyphony
+(8 in DOUBLE) from the on-screen keybed or over Web MIDI, all 100 multisounds selectable, all
+**139 program parameters** editable on a six-page panel and audible in the engine, and all **33
+effect algorithms** in the two-slot master section with the hardware's own routing — so the
+output is stereo. One command builds the sample bank. 908 tests green. Phase 5 —
+Combinations — is next.
 
 ## Quick start
 
@@ -47,6 +48,7 @@ copy. The output lands in `public/bank/` (gitignored). Sources and licences are 
 | `npm run build` | Typecheck + production build, base path `/BorgM1/` |
 | `npm run build:bank` | Build `public/bank/` from the SF2. Fails on a bad loop seam or a missing guard region |
 | `npm run probe:sf2` | Diagnostics on the source SoundFont |
+| `npm run probe:effects` | Validates the effect table against Korg's factory bank (skips cleanly without it) |
 
 ## Documentation
 
@@ -69,22 +71,26 @@ data/            build-time + shared data
   sounds.ts        the 100 multisound / 44 drum manifests, from the 1988 manual
   sourceMap.ts     which GM preset each sound is built from
   programParams.ts THE 143-byte SysEx program table — 139 parameters, with byte codecs
+  effectParams.ts  THE 25-byte effect block — 33 algorithms, their grids and defaults
   schema.ts        ControlDef + validation
 scripts/         build-time only, never shipped
   buildBank.ts     THE bank builder. One command; runs the loop-seam gate on its own output
   probeSf2.ts      measures the SoundFont instead of trusting its docs
+  probeEffects.ts  validates the effect table against Korg's own factory bank
 src/engine/
   sample/          bake pipeline: resample -> loop -> crossfade -> guard -> int16
   dsp/             levelTimeEgCore, lowpassCore, samplePlayerCore, mgCore, modCore
+  dsp/fx/          the effect section: nine blocks + effectChainCore, the 2-slot matrix
   voice/           voiceAllocCore (16 slots), keymapCore, voiceEngineCore, keyMap
   program/         programConfigCore — params bag -> engine config, the Phase 3 seam
   worklets/        thin shells only — voice.worklet, pcmTap.worklet
   bankLoader.ts    Cache API; converts Int16 -> float once at load
   engineBridge.ts  the ONE seam between React and the engine
 src/ui/          stage geometry, controls, keybed, theme
-  panel/           the five-page panel: layout, Section, ParamControl, EgGraph, Joystick
+  panel/           the six-page panel: layout, Section, ParamControl, EgGraph, Joystick,
+                   EffectSection (the FX page — its parameters come from the algorithm)
 src/state/       m1State.ts — the single serializable tree; store.ts — its one instance
-test/unit/       552 tests, Node environment
+test/unit/       908 tests, Node environment
 ```
 
 **Pure cores, thin shells.** Everything audible lives in a `*Core.ts` with no Web Audio types,
@@ -103,10 +109,14 @@ The first fidelity gate is **Phase 4**: hand-enter `I17 Organ 2` and A/B it agai
 "Show Me Love" (StoneBridge Mix). That patch's filter and amp envelopes do nothing, so the whole
 character is sample + chorus + EQ + hall. If it doesn't match, the cause is unambiguous.
 
+Everything measurable about that gate is measured and recorded in `docs/DECISIONS.md` —
+RT60 3.61 s against a 3.5 s setting, stereo correlation −0.06 from a mono source. **The
+listening comparison itself is still open**; it needs the recording, and the two constants to
+move first if it misses are named there.
+
 ## Known limitations at this stage
 
-- **No effects.** Phase 4. The 25-byte effect block is reserved in the program record so the
-  143-byte layout is already complete and round-trips.
+- **The Phase 4 A/B has not been done by ear.** Everything around it has been measured.
 - **No program browser, no WRITE.** Phase 6 owns those; the program name is display-only.
 - **DRUMS mode plays one drum per key** and unassigned keys are silent, which is authentic.
   Assembling the four selectable Drum Kits is Phase 5/6.
@@ -114,8 +124,9 @@ character is sample + chorus + EQ + hall. If it doesn't match, the cause is unam
   timbre, because GM has no slot for the M1's own synthesised textures (`Lore`, `PanWave`,
   `Wire`…). They are flagged `approx` in `data/sourceMap.ts` and marked `~` in the UI; that
   flag is the upgrade shortlist, not an apology.
-- **Output is mono.** The M1's stereo image comes from the effects section, which is Phase 4,
-  and its reverbs are mono-sum in / stereo out anyway.
+- **A Program cannot reach effect 2 in PARALLEL** — it has no panpot page, so it is hard-wired
+  into buses A/B, and in PARALLEL those stop at effect 1. That is the hardware; the panel says
+  so rather than leaving controls that do nothing. Combinations (Phase 5) get a panpot.
 - **Multisounds do not all span the keyboard.** That is authentic — the Owner's Manual says each
   waveform has a limited pitch range and "may not sound when played in a high octave".
 
