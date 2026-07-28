@@ -32,7 +32,7 @@ import { DRUM_SOURCES, MULTISOUND_SOURCES } from '../data/sourceMap.ts';
 import { bakeSample, DEFAULT_BANK_RATE } from '../src/engine/sample/bakeCore.ts';
 import { DWGS_RECIPES, DWGS_ROOT_FINE_CENTS, DWGS_ROOT_KEY, renderRecipe } from '../src/engine/sample/dwgsCore.ts';
 import { floatToInt16, int16ToFloat } from '../src/engine/sample/pcmCore.ts';
-import { loopSeamDiscontinuity } from '../src/engine/sample/loopCore.ts';
+import { loopSeamDiscontinuity, LOOP_GUARD_SAMPLES } from '../src/engine/sample/loopCore.ts';
 
 /**
  * Maximum acceptable wrap discontinuity, in units of the sample's own steepest local step
@@ -203,9 +203,9 @@ function main(): void {
   for (const recipe of DWGS_RECIPES) {
     const r = renderRecipe(recipe);
     const id = `dwgs-${r.index}`;
-    // No baking: the table IS one exact period, so it is already at the bank rate, needs
-    // no resampling, and its loop is seamless by construction. Running it through
-    // bakeSample would resample a 256-sample table for no reason and could only lose.
+    // No RESAMPLING: the table IS one exact period at the bank rate, and its loop is
+    // seamless by construction, so bakeSample could only lose. renderRecipe emits the
+    // guard region itself, so skipping bakeSample no longer means skipping that too.
     blob.add(id, floatToInt16(r.data), {
       sampleRate: DEFAULT_BANK_RATE,
       loopStart: r.loopStart,
@@ -403,6 +403,17 @@ function main(): void {
   // Run here rather than only in a unit test, so it is impossible to produce a bank with
   // a clicking loop in it. A unit test proves the algorithm is right on fixtures; this
   // proves the actual output is right on the actual data, which is the claim that matters.
+  // GUARD INVARIANT. Every looped sample must carry LOOP_GUARD_SAMPLES past loopEnd, or
+  // the 4-point interpolator reads off the end: undefined, then NaN, then a silent voice.
+  // Asserted here rather than trusted, because the one sample family that skips bakeSample
+  // is exactly the one that lost its guard, and the symptom (silence) points nowhere near
+  // the cause.
+  const missingGuard: string[] = [];
+  for (const s of blob.index.values()) {
+    if (s.loopStart < 0) continue;
+    if (s.length < s.loopEnd + LOOP_GUARD_SAMPLES) missingGuard.push(s.id);
+  }
+
   const seams: Array<{ id: string; score: number }> = [];
   let loopedCount = 0;
   for (const s of blob.index.values()) {
@@ -438,6 +449,11 @@ function main(): void {
   }
 
   let failed = false;
+  if (missingGuard.length) {
+    console.error(`\nGATE FAILED — ${missingGuard.length} looped samples have no guard region:`);
+    for (const id of missingGuard.slice(0, 20)) console.error(`  ! ${id}`);
+    failed = true;
+  }
   if (seams.length) {
     console.error(`\nGATE FAILED — ${seams.length} looped samples click at the wrap:`);
     for (const s of seams.slice(0, 20)) console.error(`  ! ${s.id}  seam=${s.score.toFixed(2)}`);

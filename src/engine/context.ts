@@ -19,10 +19,11 @@
 // the worklet module graph (including the pure DSP cores) into a real emitted chunk
 // that addModule() can load in both dev and build.
 import pcmTapWorkletUrl from './worklets/pcmTap.worklet.ts?worker&url';
+import voiceWorkletUrl from './worklets/voice.worklet.ts?worker&url';
 import { MasterRecorder } from './recorder';
 import type { RecordFormat } from './recordHelpers';
 
-export const WORKLET_URLS = [pcmTapWorkletUrl];
+export const WORKLET_URLS = [voiceWorkletUrl, pcmTapWorkletUrl];
 
 /** Load our worklet modules into any context (each Offline context needs this too). */
 export async function loadWorklets(ctx: BaseAudioContext): Promise<void> {
