@@ -17,6 +17,7 @@ import { formatElapsed, type RecordFormat } from '../../engine/recordHelpers';
 import type { RegionBox } from '../stage';
 import { ACCENT, COLORS, FONT_CONDENSED, FONT_STACK } from '../theme';
 import { useExtension, useOscMode, useProgramName } from '../useControl';
+import { useCombiName, useCombiType, useMode } from '../useCombi';
 import { PAGES, type PageId } from './layout';
 
 export interface HeaderProps {
@@ -39,6 +40,9 @@ export function Header({ box, powered, statusText, onPower }: HeaderProps) {
   const name = useProgramName();
   const mode = useOscMode();
   const resonance = useExtension('resonance');
+  const isCombi = useMode() === 'COMBI';
+  const combiName = useCombiName();
+  const combiType = useCombiType();
 
   return (
     <g>
@@ -72,10 +76,10 @@ export function Header({ box, powered, statusText, onPower }: HeaderProps) {
         </text>
       </g>
 
-      {/* Program name — the visual anchor of the design (UI-SPEC §2). */}
+      {/* Program / Combination name — the visual anchor of the design (UI-SPEC §2). */}
       <Bevel box={{ x: box.x + 156, y: box.y + 18, w: 300, h: 64 }} fill={COLORS.panelRaised} />
       <text x={box.x + 168} y={box.y + 36} fill={COLORS.legendDim} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.6}>
-        PROGRAM
+        {isCombi ? 'COMBINATION' : 'PROGRAM'}
       </text>
       <text
         x={box.x + 168}
@@ -84,15 +88,73 @@ export function Header({ box, powered, statusText, onPower }: HeaderProps) {
         fontFamily="'DejaVu Sans Mono', 'Consolas', monospace"
         fontSize={26}
       >
-        {name}
+        {isCombi ? combiName : name}
       </text>
 
-      {/* Oscillator mode readout — the flag that greys a third of the panel. */}
-      <text x={box.x + 480} y={box.y + 36} fill={COLORS.legendDim} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.6}>
-        OSC MODE
+      {/* MODE — the top-level switch, and the one that changes what the whole panel edits.
+          Rendered as two lamps rather than a dropdown because that is what the reference does
+          and because the current mode has to be readable at a glance from across a room.
+
+          It sits in the 456..620 gap between the name display and the RESONANCE block, and it
+          has to: the first placement put it under the resonance bevel, which not only printed
+          text over text but made the COMBI button UNCLICKABLE, because the later-painted bevel
+          intercepted the pointer at exactly the button's centre. The audit caught both. */}
+      <text x={box.x + 464} y={box.y + 28} fill={COLORS.legendDim} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.6}>
+        MODE
       </text>
-      <text x={box.x + 480} y={box.y + 62} fill={COLORS.legend} fontFamily={FONT_STACK} fontSize={18}>
-        {mode}
+      {(['PROGRAM', 'COMBI'] as const).map((m, i) => {
+        const on = isCombi === (m === 'COMBI');
+        const x = box.x + 464 + i * 76;
+        return (
+          <g
+            key={m}
+            role="radio"
+            aria-checked={on}
+            aria-label={`${m} mode`}
+            tabIndex={0}
+            style={{ cursor: 'pointer' }}
+            onClick={() => engineBridge.setMode(m)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                engineBridge.setMode(m);
+              }
+            }}
+          >
+            <rect
+              x={x}
+              y={box.y + 36}
+              width={68}
+              height={28}
+              rx={4}
+              fill={on ? ACCENT.edit : COLORS.panel}
+              stroke={ACCENT.edit}
+              strokeWidth={1.25}
+              opacity={on ? 1 : 0.5}
+            />
+            <text
+              x={x + 34}
+              y={box.y + 55}
+              fill={on ? COLORS.panelShadow : ACCENT.edit}
+              fontFamily={FONT_CONDENSED}
+              fontSize={11}
+              letterSpacing={1}
+              textAnchor="middle"
+            >
+              {m}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* The flag that greys a third of the panel — OSC MODE in Program mode, the Combination
+          type in Combi mode. Both do the same job: they say how much of the panel is live. It
+          sits in the gap between the bank status and RECORD. */}
+      <text x={box.x + 900} y={box.y + 40} fill={COLORS.legendDim} fontFamily={FONT_CONDENSED} fontSize={10} letterSpacing={1.6}>
+        {isCombi ? 'COMBI TYPE' : 'OSC MODE'}
+      </text>
+      <text x={box.x + 900} y={box.y + 62} fill={COLORS.legend} fontFamily={FONT_STACK} fontSize={14}>
+        {isCombi ? combiType : mode}
       </text>
 
       {/* RESONANCE is a plugin-era EXTENSION the 1988 filter never had. It ships switchable
@@ -263,20 +325,27 @@ export interface TabStripProps {
   box: RegionBox;
   page: PageId;
   onSelect: (p: PageId) => void;
+  /** COMBI mode has its own, much shorter, page list. */
+  combi?: boolean;
 }
 
 /**
  * The edit-page tabs. UI-SPEC §5: `EASY` is not a section but a curated subset page, and it
  * sits alongside the deep-edit tabs rather than above them. That pattern is what makes 139
  * parameters approachable, so EASY is first and is the default.
+ *
+ * COMBI mode shows only `TIMBRE` and `FX`, because the strip in the left column is the
+ * selector that the program panel needs six tabs to express.
  */
-export function TabStrip({ box, page, onSelect }: TabStripProps) {
+export function TabStrip({ box, page, onSelect, combi = false }: TabStripProps) {
   const w = 116;
   const gap = 8;
   const x0 = box.x + 28;
+  const tabs = combi ? (['EASY', 'FX'] as const) : PAGES;
+  const labelOf = (id: PageId): string => (combi && id === 'EASY' ? 'TIMBRE' : id);
   return (
     <g role="tablist" aria-label="Edit page">
-      {PAGES.map((id, i) => {
+      {tabs.map((id, i) => {
         const active = id === page;
         const x = x0 + i * (w + gap);
         return (
@@ -314,7 +383,7 @@ export function TabStrip({ box, page, onSelect }: TabStripProps) {
               letterSpacing={1.8}
               textAnchor="middle"
             >
-              {id}
+              {labelOf(id)}
             </text>
           </g>
         );

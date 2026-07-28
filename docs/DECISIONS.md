@@ -817,3 +817,261 @@ state from "not built" and is worth stating so a later session does not rewrite 
 Neither was pulled forward on the reasoning that a phase's scope is the phase's scope; both are
 recorded here because "already written" is invisible from the outside and is exactly the sort
 of thing that gets duplicated.
+
+---
+
+## 2026-07-28 — Phase 5: combinations
+
+### The table was located, and then CHECKED — which mattered more, again
+
+The 124-byte record came off Owner's Manual **p.128 (TABLE 2)**, cross-checked against
+**p.131 (TABLE 6)**, which prints all eight timbre bases — 36, 47, 58, 69, 80, 91, 102, 113 —
+so the manual checks itself exactly as it did for the program table. Semantics came from the
+Edit Combination pages, **pp.65-76**. `npm run probe:combis` then histogrammed Korg's own 100
+factory combinations, and **that is where three of the four findings below come from.**
+
+**The round trip is 100/100 byte-exact** across bytes 10..123 — better than Phase 4's 91/100,
+and the strongest evidence the transcription is right.
+
+**A free structural confirmation, worth recording because it costs nothing to check:**
+`861 + 100 x 124 = 13261`, which is exactly where the programs start. The record size and the
+base offset confirm each other.
+
+### TABLE 6's FOOTNOTE *14 IS NOT A BYTE OFFSET, and believing it would have shipped a bug
+
+TABLE 6 marks the SPLIT page's cursor position D with `*14` and the VELOCITY SWITCH page's with
+`*15`, printing those footnotes as the bare numbers **68** and **70**. Every other cell in that
+table is a byte offset. MEASURED against the factory bank:
+
+```
+Bass&Reed   byte68=16   t1.keyTop=69   t2.keyBottom=70   -> the split is at 70
+Bass&Horn   byte68=16   t1.keyTop=59   t2.keyBottom=60   -> the split is at 60
+```
+
+Byte 68 is timbre 3's `byte+10`, and 16 is simply its TIMBRE OFF bit — the same value all
+**174** unused timbres of the non-MULTI combinations carry. Both factory splits store the point
+as a **contiguous pair of key windows**, which is also what the manual says in prose: "Split
+point is the lowest key in the upper Program" (p.68). 68 and 70 are almost certainly the manual
+PAGE NUMBERS on which each type's split is explained — p.68 is the SPLIT notes page and p.70
+the VELOCITY SWITCH notes page — which is exactly the sort of footnote a cell needs when its
+value is not one offset. The split point is therefore a **derived view** over two windows
+(`readSplitPoint` / `writeSplitPoint`), and it has no byte of its own.
+
+Taking the table literally would have given every factory SPLIT a split point of E0, and it
+would have looked like a DSP bug.
+
+### THE MIDI FILTER POLARITY IS NOT INVERTED — PLAN.md's warning points one field to the left
+
+PLAN.md warns "MIDI filter polarity is **inverted** — OFF means receive, ON means block". That
+is not true of the four CONTROL FILTER bits. p.128 note *6 gives them as `=0:DIS, =1:ENA`, the
+Edit Combination pages display them as `ENA`/`DIS` ("Damper has no effect on the Program of
+Layer 1 when Layer 1 Damper is set to DIS", p.67), and the factory bank settles it: **the bits
+are SET in 96-99% of 800 timbres.** Under the documented reading that is an authored bank
+enabling reception nearly everywhere; under the inverted reading Korg blocked program change,
+damper, aftertouch and control change on almost every timbre of every combination.
+
+**The genuinely inverted field is TIMBRE ON/OFF**, byte+10 bit 4, `=0:ON, =1:OFF` — one byte
+along, four bit positions away, meaning the opposite thing. The warning is real and it is about
+that bit. Both are documented together in `combiParams.ts`, because the danger is precisely
+that a later session tidies one to match the other.
+
+Practical consequence, and the reason this is not academic: **a new timbre must be born with
+all four filter bits SET.** A cleared byte blocks the damper pedal on every new combination and
+reads as a sustain bug in the engine.
+
+### A timbre is OFF if EITHER mechanism says so
+
+Two exist and the hardware uses both: `TIMBRE ON/OFF` (byte+10 bit4) and — in MULTI only — a
+program byte of `00H` (note *12). MEASURED: bit4 is set on **478** timbres and the MULTI program
+byte is `00H` on **293**, agreeing on 286 and disagreeing on the rest. Neither is redundant, so
+`timbreIsOff` takes either. The 174 disagreements outside MULTI are exactly the unused timbres
+of the 29 non-MULTI combinations — 29 x 6 = 174, which is how that number was confirmed rather
+than assumed.
+
+### `TIMBRE.INST` bit7 is an honest unknown, and the obvious hypothesis is REFUTED
+
+p.128 gives byte+4 bit7 as `bit7=0:TIM, =1:INS` and nothing else. The obvious reading is that
+it marks a drum-kit timbre, because the Edit Combination pages say "When the Drum Kit Program is
+selected, the display shows `SND` and the Panpot setting in the GLOBAL Mode is operative" — a
+drum kit needs a pan per instrument, not one for the whole timbre. **The factory bank refutes
+it:** bit7 is set on exactly **2 of 800** timbres, **11** timbres point at a DRUMS-mode program,
+and the overlap is **zero**. Both bit7 timbres point at the same non-drum program.
+
+Carried verbatim and NOT modelled, which is the call Phase 4 made for the effect I/O byte's
+undocumented bit 5. Inventing a meaning would have silently rerouted two factory combinations.
+The CONTROL FILTER byte's top nibble is the same story — 0xF in 768 of 800 timbres, correlating
+with nothing testable, preserved in `FILTER_RESERVED` so an import stays lossless.
+
+### THE PANPOT LAW WAS SETTLED BY MEASUREMENT, AFTER AN ARGUMENT THAT WENT NOWHERE
+
+The first implementation used the obvious sum-preserving law — `A = (10-p)/10`, `B = p/10` — on
+the reasoning that a constant sum keeps the send into the **mono-sum-in** reverbs steady however
+a timbre is panned. Driving the app killed it in one measurement:
+
+```
+PROGRAM mode, I00, note 60                      peak 0.4927   centroid 591.1
+SINGLE combi -> I00, level 99, pan 5:5          peak 0.2464   centroid 591.6
+ratio 0.5001 — EXACTLY half, same timbre
+```
+
+A 6 dB step on switching mode, which the hardware cannot have: manual p.37 says Programs "are
+input to A and B **in a ratio of 5:5**", so Program mode IS the centred panpot position, and
+Program mode is the instrument's reference level. The centre has to be unity.
+
+**The law is now ratio-preserving and peak-normalised:** the two halves stand in exactly the
+ratio the display prints and the LOUDER of them runs at unity — `gain = share / max(a, b)`. So
+`5:5` is unity on both, `9:1` really is nine to one, `A` is unity on A and silence on B, and no
+position ever exceeds unity. Re-measured in the app: **centre / program = 1.010** with an
+identical centroid, and **9:1 measures R/L = 0.111**, which is 1/9 to three figures.
+
+What was given up is the constant sum, so a hard-panned timbre does send 6 dB less to the
+reverbs than a centred one. That is the ordinary behaviour of a 0 dB pan law, and it was the
+weaker of the two constraints: **the level step is documented, the constant send was an
+inference.** A CHOICE in its details, but the centre is not.
+
+### The engine: five real types, ONE play path
+
+`SINGLE`, `LAYER`, `SPLIT`, `VELOCITY SWITCH` and MULTI are five real types in the DATA — each
+has its own edit pages and its own SysEx meaning, and `combiParams.ts` keeps them that way. They
+are **not five behaviours in the engine.** `combiConfigCore` resolves each to a list of timbres
+with effective windows, and `voiceEngineCore` then applies one rule: a timbre sounds when its
+channel, its key window and its velocity window all match. SPLIT is two timbres whose key
+windows meet; VELOCITY SWITCH is two whose velocity windows meet. Writing the types into the
+engine as well would be the same rule spelled five times.
+
+**The allocator needed exactly one new thing, and it is not the one PLAN.md predicted.** "No
+per-program limit but never more than 16 total" genuinely needed no mechanism — eight timbres
+pointed at the same `allocate` produce it. But the SAME-NOTE-FIRST rule had to gain a **timbre**
+term: two timbres of a LAYER are a different sound on the same note and the same channel — and
+Korg's factory bank puts **all 800 timbres on channel 1** — so keying "this is the same note" on
+(note, channel) alone made timbre 2's note-on steal timbre 1's slot and collapsed every layer to
+one sound.
+
+**A dropped timbre leaves a HOLE rather than being removed.** The allocator's same-note rule and
+the engine's per-timbre MG phases both key on the row index, so closing the gap would silently
+retune every timbre above a muted one.
+
+**The MGs are per-timbre, because they are per-PROGRAM.** Eight timbres carrying eight programs
+need eight pairs of phases; one shared pair would lock every timbre's vibrato to the same rate.
+Still advanced once per control block each, which is what Phase 3 established and what stops
+them running 16x fast on a full chord.
+
+**Note-off is resolved slot by slot rather than in one call to the allocator**, because HOLD and
+the damper filter are both per timbre. A Combination can hold one timbre with HOLD on and
+another with the damper filtered out, on the same key of the same channel, and each has to be
+right.
+
+### Buses C and D, and the half of the effect matrix a Program cannot reach
+
+Phase 4 built the matrix and documented that a Program is hard-wired 5:5 into A/B and therefore
+cannot reach effect 2 in PARALLEL. Phase 5 supplies the panpot that can. The topology is manual
+pp.36-37 verbatim, and it is the page on which **Output 3 Pan and Output 4 Pan** finally make
+sense: they are where outputs 3 and 4 sit in the main stereo pair. In SERIAL they carry C and D
+into effect 2's input; in PARALLEL they carry effect 2's own output back.
+
+The factory bank says this path is used, not theoretical: **68 of 800 timbres are panned to C,
+C+D or D, across 50 of the 100 combinations**, and **41 of the 100 set Pan 3 to 101 (hard L) and
+Pan 4 to 1 (hard R)** — which is the manual's own recipe for hearing both effects in stereo.
+Measured in the browser, one timbre on C+D with effect 2 = Hall:
+
+```
+PARALLEL, pans set        peak 0.158   correlation 0.868   (wet, stereo)
+PARALLEL, pans OFF        SILENCE
+SERIAL,   pans set        peak 0.157   correlation 0.870
+```
+
+**Pans OFF being silent is authentic, not a fault** — the manual says OFF makes outputs 3 and 4
+separate jacks for an external mixer, and 37 of Korg's 100 combinations leave them there.
+
+**A Combination has its OWN effect section** (record bytes 11-35, the same 25-byte block as a
+program's 38-62), so the store's effect methods now resolve by mode. The whole FX panel serves
+both without knowing which it is looking at.
+
+### An inverted window is NO LONGER ORDERED — reversing a Phase 0 decision, with evidence
+
+Phase 0 ordered `low > high` on the reasoning that an inverted window "silences a timbre with no
+visible cause, which is the most confusing possible way for a Combination to not work". The
+reasoning does not survive contact with the hardware: **an empty window is Korg's own
+mechanism.** The manual states it outright — "If the Velocity SW point is set to 1, the soft
+Program will not sound" (p.70), which is exactly `velTop = 0 < velBottom = 1` — and the factory
+bank writes `VEL TOP = 0` on all 174 unused timbres of its non-MULTI combinations. Ordering
+those would make every unused timbre sound.
+
+The concern behind the old rule is answered instead by the timbre strip, which **greys a row
+that cannot sound and says why** (`WINDOW EMPTY`, `MUTED`, `NOT SOLOED`). The cause is visible
+rather than silently corrected, which is what the old decision actually wanted.
+
+`VEL TOP`'s range is widened to `00~7F` for the same reason, and only `VEL TOP` — `VEL BOTTOM`
+is never 0 in the same 800 timbres.
+
+### The Phase 5 stand-in for the program bank, labelled as one
+
+A timbre stores a **pointer** (`I00`..`C99`); the 100 factory programs behind those pointers are
+Phase 6's. Until they are imported, a slot that is not the edit buffer materialises as the INIT
+program with its MULTISOUND set to the slot number — so `I00` is A.Piano, `I05` is Organ1, and
+eight timbres are eight audibly different sounds. **That is not a guess at Korg's bank and must
+never be read as one**; it is a 1:1 map onto the 100 multisounds the sample bank actually has.
+The resolver is injected into `buildCombiTimbres` precisely so Phase 6 replaces one method.
+
+**The edit buffer wins over the stand-in for its own slot**, which is the hardware's behaviour:
+a Combination timbre plays the program as currently edited, not a stale copy.
+
+### The rendered-page audit was rebuilt, and it earned its keep three times
+
+`test/e2e/layoutAudit.spec.ts` (Playwright, 1900x1030) walks every rendered `<text>` pair and
+fails any overlap, across all six program pages, all five combination types and three timbre
+rows each. It found, in order:
+
+1. **The new MODE buttons printed over the RESONANCE block** — and, worse, the later-painted
+   bevel intercepted the pointer at exactly the COMBI button's centre, so the button was
+   **unclickable**. One misplacement, two symptoms, neither visible from the code.
+2. **`COMBI_TYPE` is a FIVE-position switch** — the tallest control in the instrument — and a
+   switch draws its label above the slot, so it printed straight through the section title.
+   Phase 4 met this class with the 4-position waveform switch and solved it by keeping that one
+   out of column 0; a fifth position is out of reach of that trick, so the title band grows.
+3. **A collision the text-only audit could not see.** The derived SPLIT knob sat one 64 px cell
+   from the TYPE switch, whose `VELOCITY SWITCH` label runs 90 px wide — so the knob's gold
+   circle sat on the switch's position list while no two `<text>` boxes overlapped. The audit
+   now also compares whole **labelled controls**, ignoring containment, which is the general
+   form of the check rather than the instance.
+
+**This is the fifth phase in which measuring the running app caught something the unit tests
+could not, and the fourth in which a weak metric gave a confidently wrong answer.** Here the
+weak metric was a peak-bin pitch read that reported 260.7 Hz and 785.2 Hz — the 1st and 3rd
+harmonics — for two notes that were an octave apart. The measurement that settled the types
+instead used **L/R balance**: timbre 1 hard to bus A, timbre 2 hard to bus B, so "which timbre
+sounded" is a channel amplitude, which no harmonic can imitate and which does not move with
+velocity or pitch.
+
+### Verified by driving the running app, not only by tests
+
+At 48 kHz against the 32 kHz bank, extensions OFF:
+
+- **SPLIT**: keys 36/58/59 read balance 0.000 and keys 60/61/84 read 1.000, with the boundary
+  exactly at the split point — "the lowest key in the upper Program".
+- **VELOCITY SWITCH**: velocities 1/40/63 read 0.000 and 64/100/127 read 1.000.
+- **LAYER**: balance 0.500, `peakL = peakR = 0.5862` — both timbres sounding, one per bus.
+- **SINGLE**: balance 0.000 with `peakR = 0` — timbre 2 correctly excluded by the type.
+- **MULTI, 8 timbres, one note**: peak 0.816, every sample finite.
+- **24 notes into the 16-slot pool with 8 timbres competing**: peak 1.140, every sample finite,
+  no runaway — and after release the output is **exact silence**, so no slot is stranded.
+- The panpot and C/D figures above.
+
+### Undocumented curves and choices added this phase — all CHOICES, not M1 facts
+
+The panpot gain law (ratio-preserving, peak-normalised; the centre is NOT a choice — see
+above) · OUTPUT LEVEL 0..99 mapped linearly, with 99 = unity and 0 = silent, which the manual
+fixes at the endpoints and nowhere between · KEY TRANSPOSE repitching the sample rather than
+shifting the keymap lookup, consistent with how OCTAVE and INTERVAL already behave.
+
+### Still open
+
+**The negative-cutoff-tracking question from Phase 3 is still not settled.** Nothing in this
+phase exercised it.
+
+**The Phase 4 listening A/B is still not done.** Unchanged.
+
+**Per-timbre IFX** is rendered visibly inert. It is a plugin-era extension the hardware has no
+equivalent for, it is not implemented, and UI-SPEC §11 records that whether it is a send or an
+enable toggle is itself unresolved. A control that looks live and does nothing is worse than
+one that is visibly off.

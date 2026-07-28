@@ -42,6 +42,16 @@ export interface Slot {
   /** MIDI channel, or -1 when free. */
   channel: number;
   /**
+   * Which Combination timbre owns this slot (0..7), or -1 when free. Program mode uses 0.
+   *
+   * THE SAME-NOTE RULE NEEDS THIS, and it is the one thing Combinations genuinely add to the
+   * allocator. Two timbres of a LAYER are a different sound on the SAME note and the SAME
+   * channel — the factory bank puts all eight timbres on channel 1 — so keying "this is the
+   * same note" on (note, channel) alone would make timbre 2's note-on steal timbre 1's slots
+   * and a layer would collapse to whichever timbre allocated last.
+   */
+  timbre: number;
+  /**
    * Groups the slots of one logical voice. Both halves of a DOUBLE share an id, so a
    * note-off releases both and neither can be stolen without the other being considered.
    */
@@ -63,6 +73,7 @@ export function makeSlot(): Slot {
     state: 'free',
     note: -1,
     channel: -1,
+    timbre: -1,
     voiceId: -1,
     oscIndex: 0,
     startedAt: 0,
@@ -143,6 +154,8 @@ export interface AllocationRequest {
   slots: 1 | 2;
   note: number;
   channel: number;
+  /** Combination timbre 0..7. Program mode passes 0. See `Slot.timbre`. */
+  timbre?: number;
   now: number;
 }
 
@@ -174,13 +187,20 @@ export function resetVoiceIds(): void {
  */
 export function allocate(slots: Slot[], req: AllocationRequest): AllocationResult {
   const need = req.slots;
+  const timbre = req.timbre ?? 0;
   const claimed: number[] = [];
   const stolen: number[] = [];
 
-  // 1. same note, same channel — take these first, in oscillator order.
+  // 1. same note, same channel, SAME TIMBRE — take these first, in oscillator order.
+  //    The timbre term is what keeps a LAYER from collapsing; see `Slot.timbre`.
   for (let i = 0; i < slots.length && claimed.length < need; i++) {
     const s = slots[i]!;
-    if (s.state !== 'free' && s.note === req.note && s.channel === req.channel) {
+    if (
+      s.state !== 'free' &&
+      s.note === req.note &&
+      s.channel === req.channel &&
+      s.timbre === timbre
+    ) {
       claimed.push(i);
       stolen.push(i);
     }
@@ -220,6 +240,7 @@ export function allocate(slots: Slot[], req: AllocationRequest): AllocationResul
     s.state = 'held';
     s.note = req.note;
     s.channel = req.channel;
+    s.timbre = timbre;
     s.voiceId = voiceId;
     s.oscIndex = oscIndex;
     s.startedAt = req.now;
@@ -273,6 +294,7 @@ export function freeSlot(slot: Slot): void {
   slot.state = 'free';
   slot.note = -1;
   slot.channel = -1;
+  slot.timbre = -1;
   slot.voiceId = -1;
   slot.oscIndex = 0;
   slot.stealingSince = -1;

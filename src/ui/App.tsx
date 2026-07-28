@@ -13,17 +13,27 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import './styles.css';
-import { REGIONS, PAGE_LAYOUTS, flowSections, type PageId } from './panel/layout';
+import {
+  REGIONS,
+  PAGE_LAYOUTS,
+  COMBI_PAGE_LAYOUTS,
+  flowSections,
+  type PageId,
+} from './panel/layout';
+import { timbresInType } from '../../data/combiParams';
 import { STAGE } from './stage';
 import { ErrorOverlay } from './ErrorOverlay';
 import { AmpEgGraph, FilterEgGraph } from './panel/EgGraph';
 import { EffectRoutingSection, EffectSlotSection } from './panel/EffectSection';
+import { CombiSection } from './panel/CombiSection';
 import { Header, TabStrip } from './panel/Header';
 import { Joystick } from './panel/Joystick';
 import { Section } from './panel/Section';
+import { TimbreStrip } from './panel/TimbreStrip';
 import { KeyboardPanel } from './keyboard/KeyboardPanel';
 import { engineBridge, type BridgeStatus } from '../engine/engineBridge';
 import { useOsc2Enabled } from './useControl';
+import { useCombiType, useMode } from './useCombi';
 import { WebMidiInput, type MidiStatus } from './midi/webMidiInput';
 import { COLORS } from './theme';
 
@@ -51,6 +61,10 @@ export function App() {
   const [midiStatus, setMidiStatus] = useState<MidiStatus | null>(null);
   const [, forceRender] = useState(0);
   const osc2Enabled = useOsc2Enabled();
+  const mode = useMode();
+  const combiType = useCombiType();
+  /** Which timbre row the strip has selected. The Combination twin of the `1`/`2` flag. */
+  const [timbre, setTimbre] = useState(0);
 
   useEffect(() => {
     const onResize = () => setScale(computeScale(window.innerWidth, window.innerHeight));
@@ -86,9 +100,32 @@ export function App() {
 
   // The FX page is laid out by EffectSection, not by a declared parameter list — see PAGES.
   const isFx = page === 'FX';
+  const isCombi = mode === 'COMBI';
   const layout = PAGE_LAYOUTS[isFx ? 'EASY' : page];
   const leftBoxes = useMemo(() => flowSections(layout.left, REGIONS.left), [layout]);
   const centreBoxes = useMemo(() => flowSections(layout.centre, REGIONS.centre), [layout]);
+
+  // Combination mode reuses the same three columns: the strip takes the left, one timbre's
+  // detail the centre, and its windows and MIDI filters the right.
+  const combiLayout = COMBI_PAGE_LAYOUTS.TIMBRE;
+  const combiCentreBoxes = useMemo(
+    () =>
+      flowSections(
+        combiLayout.centre.map((s) => ({ ...s, perOsc: false })),
+        REGIONS.centre,
+      ),
+    [combiLayout],
+  );
+  const combiRightBoxes = useMemo(
+    () =>
+      flowSections(
+        combiLayout.right.map((s) => ({ ...s, perOsc: false })),
+        REGIONS.right,
+      ),
+    [combiLayout],
+  );
+  /** Rows the current type actually uses — the rest of the strip greys. */
+  const liveTimbres = timbresInType(combiType);
 
   // Two effect slots down the left column and the placement matrix in the centre. The two
   // slots get equal height because neither is subordinate — SERIAL runs 1 into 2.
@@ -150,13 +187,35 @@ export function App() {
                 else void engineBridge.powerOn();
               }}
             />
-            <TabStrip box={REGIONS.tabs} page={page} onSelect={setPage} />
+            <TabStrip box={REGIONS.tabs} page={page} onSelect={setPage} combi={isCombi} />
 
             {isFx ? (
               <>
                 <EffectSlotSection slot={1} box={fxTop} />
                 <EffectSlotSection slot={2} box={fxBottom} />
                 <EffectRoutingSection box={REGIONS.centre} />
+              </>
+            ) : isCombi ? (
+              <>
+                <TimbreStrip box={REGIONS.left} selected={timbre} onSelect={setTimbre} />
+                {combiLayout.centre.map((section, i) => (
+                  <CombiSection
+                    key={`c-c-${section.title}`}
+                    section={section}
+                    box={combiCentreBoxes[i]!}
+                    timbre={timbre}
+                    enabled={timbre < liveTimbres}
+                  />
+                ))}
+                {combiLayout.right.map((section, i) => (
+                  <CombiSection
+                    key={`c-r-${section.title}`}
+                    section={section}
+                    box={combiRightBoxes[i]!}
+                    timbre={timbre}
+                    enabled={timbre < liveTimbres}
+                  />
+                ))}
               </>
             ) : (
               <>
@@ -180,9 +239,15 @@ export function App() {
             )}
 
             {/* TWO EG components, never one — the filter EG releases to a level and the amp
-                EG cannot. See panel/EgGraph.tsx. */}
-            <FilterEgGraph box={egTop} osc={1} enabled />
-            <AmpEgGraph box={egBottom} osc={1} enabled />
+                EG cannot. See panel/EgGraph.tsx. The right column belongs to the Combination's
+                own sections in COMBI mode, so the graphs stand down rather than showing a
+                program the selected timbre may not even be playing. */}
+            {!isCombi && (
+              <>
+                <FilterEgGraph box={egTop} osc={1} enabled />
+                <AmpEgGraph box={egBottom} osc={1} enabled />
+              </>
+            )}
           </svg>
 
           <div className="panel-keys">

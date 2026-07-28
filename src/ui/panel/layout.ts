@@ -236,6 +236,122 @@ export const PAGE_LAYOUTS: Record<ParamPageId, PageLayout> = {
   CONTROL: { left: [PITCH_MG, AFTER_TOUCH], centre: [JOY_STICK, FILTER_MG], right: 'egs' },
 };
 
+// ---- the Combination pages ----------------------------------------------------------------
+
+/**
+ * The Combination edit pages. Distinct from `PAGES` because COMBI mode is a different
+ * instrument surface, not another tab of the program panel: its left column is the 8-row
+ * timbre strip rather than a stack of parameter sections.
+ */
+export const COMBI_PAGES = ['TIMBRE', 'FX'] as const;
+export type CombiPageId = (typeof COMBI_PAGES)[number];
+
+export interface CombiSection {
+  title: string;
+  /** Combination parameter ids WITHOUT the `T1_`..`T8_` prefix; the strip supplies it. */
+  params: string[];
+  /** Combination-level parameters, which take no timbre prefix. */
+  global?: boolean;
+  /** Renders the SPLIT / VELOCITY SWITCH point when the type owns one. See `TIMBRE_MAIN`. */
+  hostsDerivedPoint?: boolean;
+  columns?: number;
+}
+
+/**
+ * PROGRAM, LEVEL and PAN are deliberately ABSENT — they live on the strip, where UI-SPEC puts
+ * them, and a 201-position program selector or a 14-position panpot rendered as a knob-panel
+ * lever would be worse in every way than the stepper and rotary the strip already has.
+ *
+ * This section also HOSTS THE DERIVED SPLIT / VELOCITY SWITCH POINT, which is a combination
+ * parameter rather than a timbre one. It is here because of where it cannot go: beside the
+ * five-position TYPE switch, whose `VELOCITY SWITCH` label runs 90 px to the right of the
+ * switch itself and straight under the next cell, which is only 64 px away. Sitting among
+ * TRANSPOSE and DETUNE also reads correctly — all three describe the relationship between the
+ * two timbres rather than either one of them.
+ */
+const TIMBRE_MAIN: CombiSection = {
+  title: 'TIMBRE',
+  params: ['CHANNEL', 'TRANSPOSE', 'DETUNE'],
+  hostsDerivedPoint: true,
+};
+
+const TIMBRE_WINDOW: CombiSection = {
+  title: 'KEY / VELOCITY WINDOW',
+  params: ['KEY_BOTTOM', 'KEY_TOP', 'VEL_BOTTOM', 'VEL_TOP'],
+};
+
+/**
+ * The four MIDI filters. **A SET BIT RECEIVES** — `ENA` passes, `DIS` blocks — which is the
+ * opposite polarity to TIMBRE ON/OFF one byte along. See `CONTROL_FILTER_BITS`.
+ */
+const TIMBRE_FILTER: CombiSection = {
+  title: 'MIDI FILTER',
+  params: [
+    'FILTER_PROGRAM_CHANGE',
+    'FILTER_DAMPER',
+    'FILTER_AFTER_TOUCH',
+    'FILTER_CONTROL_CHANGE',
+  ],
+};
+
+/** Combination-level. TYPE is on every page; the split/switch point appears with its type. */
+const COMBI_GLOBAL: CombiSection = {
+  title: 'COMBINATION',
+  params: ['COMBI_TYPE'],
+  global: true,
+};
+
+export interface CombiPageLayout {
+  centre: CombiSection[];
+  right: CombiSection[];
+}
+
+export const COMBI_PAGE_LAYOUTS: Record<Exclude<CombiPageId, 'FX'>, CombiPageLayout> = {
+  TIMBRE: { centre: [COMBI_GLOBAL, TIMBRE_MAIN], right: [TIMBRE_WINDOW, TIMBRE_FILTER] },
+};
+
+/** Every combination parameter reachable from a page. The coverage test's other half. */
+export const COMBI_PAGE_SECTIONS: CombiSection[] = Object.values(COMBI_PAGE_LAYOUTS).flatMap(
+  (p) => [...p.centre, ...p.right],
+);
+
+/**
+ * One row of the timbre strip, in design px. UI-SPEC §3's left column, measured out so the
+ * pieces cannot overlap — eight rows of six controls is exactly the density that collides,
+ * and the rendered-page audit checks this rather than trusting it.
+ *
+ * `x` values are offsets from the strip box's left edge.
+ */
+export const TIMBRE_ROW = {
+  /** Vertical space per row, before the strip's own padding. */
+  h: 58,
+  gap: 4,
+  /** The green edge bar marking the selected row (UI-SPEC §3). */
+  barW: 4,
+  /** Row number gutter. */
+  numX: 12,
+  /** SOLO / MUTE / IFX / v — four small buttons. */
+  buttonsX: 22,
+  buttonW: 25,
+  buttonH: 17,
+  buttonGap: 3,
+  /** Program name field. */
+  nameX: 136,
+  nameW: 116,
+  /** LEVEL: a numeric readout with a horizontal slider beneath it. */
+  levelX: 258,
+  levelW: 78,
+  /** PAN: a small rotary with its value beside it. */
+  panX: 344,
+  panW: 74,
+  /** OUT: the 1+2 / 3+4 dropdown, which is a VIEW of the panpot's A/B versus C/D halves. */
+  outX: 424,
+  outW: 62,
+} as const;
+
+/** Total width the row occupies. Asserted against the strip region by the layout test. */
+export const TIMBRE_ROW_W = TIMBRE_ROW.outX + TIMBRE_ROW.outW;
+
 // ---- geometry ---------------------------------------------------------------------------
 
 /** One control's cell. Sized for a medium knob plus its label and value readout. */

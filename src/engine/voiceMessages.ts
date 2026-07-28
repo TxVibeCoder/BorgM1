@@ -11,7 +11,13 @@
  * transferred buffer cannot carry a Float32Array view.
  */
 
-import type { ControllerConfig, OscConfig, OscMode, ProgramConfig } from './voice/voiceEngineCore';
+import type {
+  ControllerConfig,
+  OscConfig,
+  OscMode,
+  ProgramConfig,
+  TimbreConfig,
+} from './voice/voiceEngineCore';
 import type { MgConfig } from './dsp/mgCore';
 
 /** One sample, addressed as a window into the transferred bank blob. */
@@ -39,4 +45,10 @@ export type SerializedProgram = Omit<ProgramConfig, 'osc'> & {
   osc: [SerializedOsc, SerializedOsc];
 };
 
-export type { ControllerConfig, MgConfig, OscMode };
+/**
+ * One Combination timbre on the wire. Same derivation as `SerializedProgram`, for the same
+ * reason: a timbre gained six fields this phase and every one of them has to arrive.
+ */
+export type SerializedTimbre = Omit<TimbreConfig, 'program'> & { program: SerializedProgram };
+
+export type { ControllerConfig, MgConfig, OscMode, TimbreConfig };

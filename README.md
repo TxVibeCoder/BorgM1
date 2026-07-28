@@ -7,12 +7,14 @@ envelopes, a 33-algorithm effects section, 8-timbre Combinations, and (optionall
 sequencer. Korg's official factory bank has been decoded, so the 100 factory programs and 100
 combinations are **importable, not reconstructable**.
 
-**Status: Phases 0–4 complete — it plays, it edits, and it has its effects.** 16-voice polyphony
-(8 in DOUBLE) from the on-screen keybed or over Web MIDI, all 100 multisounds selectable, all
-**139 program parameters** editable on a six-page panel and audible in the engine, and all **33
-effect algorithms** in the two-slot master section with the hardware's own routing — so the
-output is stereo. One command builds the sample bank. 908 tests green. Phase 5 —
-Combinations — is next.
+**Status: Phases 0–5 complete — it plays, it edits, it has its effects, and it is a
+workstation.** 16-voice polyphony (8 in DOUBLE) from the on-screen keybed or over Web MIDI, all
+100 multisounds selectable, all **139 program parameters** editable on a six-page panel and
+audible in the engine, all **33 effect algorithms** in the two-slot master section with the
+hardware's own routing — so the output is stereo — and **five Combination types with eight
+timbres** on an 8-row strip, sharing one 16-slot pool and routed by the 14-position panpot that
+reaches effect buses C and D. One command builds the sample bank. 1070 tests green plus a
+Playwright layout audit. Phase 6 — the browser and the factory bank — is next.
 
 ## Quick start
 
@@ -53,6 +55,8 @@ copy. The output lands in `public/bank/` (gitignored). Sources and licences are 
 | `npm run build:bank` | Build `public/bank/` from the SF2. Fails on a bad loop seam or a missing guard region |
 | `npm run probe:sf2` | Diagnostics on the source SoundFont |
 | `npm run probe:effects` | Validates the effect table against Korg's factory bank (skips cleanly without it) |
+| `npm run probe:combis` | The same, for the 124-byte Combination table. **100/100 byte-exact** |
+| `npx playwright test` | The rendered-page layout audit — text and control collisions at a real window size |
 
 ## Documentation
 
@@ -76,25 +80,30 @@ data/            build-time + shared data
   sourceMap.ts     which GM preset each sound is built from
   programParams.ts THE 143-byte SysEx program table — 139 parameters, with byte codecs
   effectParams.ts  THE 25-byte effect block — 33 algorithms, their grids and defaults
+  combiParams.ts   THE 124-byte Combination table — 5 types, 8 timbres, the 14-position panpot
   schema.ts        ControlDef + validation
 scripts/         build-time only, never shipped
   buildBank.ts     THE bank builder. One command; runs the loop-seam gate on its own output
   probeSf2.ts      measures the SoundFont instead of trusting its docs
   probeEffects.ts  validates the effect table against Korg's own factory bank
+  probeCombis.ts   the same for combinations — it is what corrected TABLE 6 and the plan
 src/engine/
   sample/          bake pipeline: resample -> loop -> crossfade -> guard -> int16
   dsp/             levelTimeEgCore, lowpassCore, samplePlayerCore, mgCore, modCore
   dsp/fx/          the effect section: nine blocks + effectChainCore, the 2-slot matrix
   voice/           voiceAllocCore (16 slots), keymapCore, voiceEngineCore, keyMap
   program/         programConfigCore — params bag -> engine config, the Phase 3 seam
+                   combiConfigCore — the five types -> one list of timbres, the Phase 5 seam
   worklets/        thin shells only — voice.worklet, pcmTap.worklet
   bankLoader.ts    Cache API; converts Int16 -> float once at load
   engineBridge.ts  the ONE seam between React and the engine
 src/ui/          stage geometry, controls, keybed, theme
   panel/           the six-page panel: layout, Section, ParamControl, EgGraph, Joystick,
-                   EffectSection (the FX page — its parameters come from the algorithm)
+                   EffectSection (the FX page — its parameters come from the algorithm),
+                   TimbreStrip + CombiSection (COMBI mode's 8 rows and their detail)
 src/state/       m1State.ts — the single serializable tree; store.ts — its one instance
-test/unit/       908 tests, Node environment
+test/unit/       1070 tests, Node environment
+test/e2e/        the rendered-page layout audit (Playwright, real window size)
 ```
 
 **Pure cores, thin shells.** Everything audible lives in a `*Core.ts` with no Web Audio types,
@@ -134,7 +143,18 @@ move first if it misses are named there.
   flag is the upgrade shortlist, not an apology.
 - **A Program cannot reach effect 2 in PARALLEL** — it has no panpot page, so it is hard-wired
   into buses A/B, and in PARALLEL those stop at effect 1. That is the hardware; the panel says
-  so rather than leaving controls that do nothing. Combinations (Phase 5) get a panpot.
+  so rather than leaving controls that do nothing. A **Combination** has a real panpot and does
+  reach it — measured at correlation 0.868 through effect 2.
+- **A Combination timbre panned to C/D is SILENT when Output 3/4 Pan are OFF.** Also the
+  hardware: those pans are what folds outputs 3 and 4 into the stereo pair, and 37 of Korg's
+  100 factory combinations leave them off because they expected a mixer on those jacks.
+- **Combination timbres point at a program bank that does not exist yet.** Until Phase 6
+  imports Korg's preload, a slot other than the edit buffer materialises as the INIT program
+  with its multisound set to the slot number — a labelled stand-in, not a guess at the factory
+  bank. Phase 6 replaces one method.
+- **Per-timbre `IFX` is visibly inert.** It is a plugin-era extension the hardware has no
+  equivalent for, it is not implemented, and whether it is a send or a toggle is itself
+  unresolved (UI-SPEC §11).
 - **Multisounds do not all span the keyboard.** That is authentic — the Owner's Manual says each
   waveform has a limited pitch range and "may not sound when played in a high octave".
 

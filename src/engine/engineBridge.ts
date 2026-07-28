@@ -13,13 +13,16 @@
  * INDEX into actual PCM, and getting the result across to the worklet.
  */
 
+import { programRefToIndex, type ProgramRef } from '../../data/combiParams';
 import { snapEffectParam } from '../../data/effectParams';
+import { defaultProgramParams } from '../../data/programParams';
 import { loadBank, type BankMultisound, type LoadedBank } from './bankLoader';
 import type { RecordFormat } from './recordHelpers';
 import { StudioContext } from './context';
+import { buildCombiTimbres, silentTimbre } from './program/combiConfigCore';
 import { buildProgramConfig, type OscSource } from './program/programConfigCore';
 import { buildKeymap, type KeyZoneSpec } from './voice/keymapCore';
-import type { SerializedProgram, SerializedSample } from './voiceMessages';
+import type { SerializedProgram, SerializedSample, SerializedTimbre } from './voiceMessages';
 import { m1Store } from '../state/store';
 
 export interface BridgeStatus {
@@ -234,13 +237,25 @@ class EngineBridge {
     this.pushEffects();
   }
 
+  /**
+   * Output 3/4 pan: `0` = OFF, `1` = R, `2..100` = ratio, `101` = L. These place outputs 3 and
+   * 4 in the main stereo pair, and they are the only reason a timbre panned to C/D is audible
+   * on a two-output host at all — see `mixPanned` in `effectChainCore`.
+   */
+  setEffectOutPan(which: 3 | 4, value: number): void {
+    m1Store.setEffectOutPan(which, value);
+    this.pushEffects();
+  }
+
   /** Mid-drag effect values, same contract as `pending` for program parameters. */
   private readonly pendingEffects = new Map<string, number | string>();
   private readonly pendingBalance = new Map<string, number>();
 
   private pushEffects(): void {
     if (!this.node) return;
-    const effects = m1Store.getState().program.effects;
+    // Whichever mode's effect section is current — a Combination has its own 25-byte block.
+    const state = m1Store.getState();
+    const effects = state.mode === 'COMBI' ? state.combi.effects : state.program.effects;
     if (this.pendingEffects.size > 0 || this.pendingBalance.size > 0) {
       for (const [key, value] of this.pendingEffects) {
         const [slot, id] = splitPending(key);
@@ -326,51 +341,182 @@ class EngineBridge {
     return built;
   }
 
-  private pushProgram(): void {
-    if (!this.node || !this.bank) return;
-    const state = m1Store.getState();
-    // Mid-drag values sit on top of the committed tree, so the engine hears the knob as it
-    // moves while the store still holds the last settled value.
-    const params =
-      this.pending.size === 0
-        ? state.program.params
-        : { ...state.program.params, ...Object.fromEntries(this.pending) };
+  /** Build one engine program from a params bag plus the bank. Null if the bank is not ready. */
+  private buildProgram(
+    params: Record<string, number | string>,
+    resonance: number,
+  ): SerializedProgram | null {
     const drums = params.OSC_MODE === 'DRUMS';
-
     const s1 = this.sourceFor(1, Number(params.OSC1_MULTISOUND ?? 0), drums);
     const s2 = this.sourceFor(2, Number(params.OSC2_MULTISOUND ?? 0), drums);
-    if (!s1) return;
-    const src2 = s2 ?? s1;
-
+    if (!s1) return null;
     // The engine's config is built from the parameter model; only the PCM is supplied here.
     // `buildProgramConfig` coalesces, so a hand-edited bundle cannot reach the worklet with
     // an out-of-range value. Generic in the sample type, so what comes back IS the wire
     // format — no cast, and no field can be dropped in transit.
-    const program: SerializedProgram = buildProgramConfig<SerializedSample>(
+    return buildProgramConfig<SerializedSample>(
       params,
-      [s1, src2] as [OscSource<SerializedSample>, OscSource<SerializedSample>],
-      { resonance: state.extensions.resonance ? 1 : 0 },
+      [s1, s2 ?? s1] as [OscSource<SerializedSample>, OscSource<SerializedSample>],
+      { resonance },
     );
+  }
+
+  /** The edit buffer's parameters, with any mid-drag values on top. */
+  private editBufferParams(): Record<string, number | string> {
+    const params = m1Store.getState().program.params;
+    return this.pending.size === 0 ? params : { ...params, ...Object.fromEntries(this.pending) };
+  }
+
+  /**
+   * PHASE 5 STAND-IN FOR THE PROGRAM BANK, and it is deliberately labelled as one.
+   *
+   * A Combination timbre stores a POINTER (`I00`..`C99`), and the 100 factory programs behind
+   * those pointers are Phase 6's job — `decodeProgram` is written and tested but the preload is
+   * not imported yet. Until it is, a slot that is not the edit buffer materialises as the INIT
+   * program with its MULTISOUND set to the slot number, so `I00` is A.Piano, `I05` is Organ1,
+   * and eight timbres are eight audibly different sounds.
+   *
+   * That is not a guess at Korg's bank and must never be mistaken for one; it is a 1:1 map onto
+   * the 100 multisounds the sample bank actually contains. **Phase 6 replaces this one method
+   * and nothing else** — the resolver is injected into `buildCombiTimbres` precisely so that
+   * swap costs a line.
+   *
+   * THE EDIT BUFFER WINS over the stand-in for its own slot, which is the hardware's behaviour:
+   * a Combination timbre plays the program as currently edited, not a stale copy.
+   */
+  private programParamsFor(ref: ProgramRef): Record<string, number | string> | null {
+    const index = programRefToIndex(ref);
+    if (index === null) return null;
+    const state = m1Store.getState();
+    const editSlot = state.program.slot ?? 'I00';
+    if (ref === editSlot) return this.editBufferParams();
+    // Only the internal bank has samples behind it; a card slot has nothing to play.
+    if (index >= 100) return null;
+    return { ...defaultProgramParams(), OSC1_MULTISOUND: index, OSC2_MULTISOUND: index };
+  }
+
+  private pushProgram(): void {
+    if (!this.node || !this.bank) return;
+    const state = m1Store.getState();
+    if (state.mode === 'COMBI') {
+      this.pushTimbres();
+      return;
+    }
+    const program = this.buildProgram(
+      this.editBufferParams(),
+      state.extensions.resonance ? 1 : 0,
+    );
+    if (!program) return;
     this.node.port.postMessage({ type: 'program', program });
+  }
+
+  /**
+   * Push the Combination's timbres.
+   *
+   * A dropped timbre becomes a SILENT PLACEHOLDER rather than being removed, so every timbre
+   * keeps its row index — the allocator's same-note rule and the engine's per-timbre MG phases
+   * both key on that index, and closing the gap would silently retune every timbre above a
+   * muted one.
+   */
+  private pushTimbres(): void {
+    if (!this.node || !this.bank) return;
+    const state = m1Store.getState();
+    const resonance = state.extensions.resonance ? 1 : 0;
+    const params =
+      this.pendingCombi.size === 0
+        ? state.combi.params
+        : { ...state.combi.params, ...Object.fromEntries(this.pendingCombi) };
+
+    const silentProgram = this.buildProgram(defaultProgramParams(), resonance);
+    if (!silentProgram) return;
+
+    const resolved = buildCombiTimbres<SerializedSample>({
+      params,
+      solo: state.combi.solo,
+      resolveProgram: (ref) => {
+        const p = this.programParamsFor(ref);
+        return p ? this.buildProgram(p, resonance) : null;
+      },
+    });
+    const timbres: SerializedTimbre[] = resolved.map(
+      (t) => t ?? silentTimbre<SerializedSample>(silentProgram),
+    );
+    this.node.port.postMessage({ type: 'timbres', timbres });
   }
 
   /** Re-push after something outside the params bag changed (bank load, extension toggle). */
   refresh(): void {
     this.pushProgram();
     this.pushEffects();
+    this.node?.port.postMessage({
+      type: 'globalChannel',
+      channel: Math.max(0, m1Store.getState().keyboard.midiChannel),
+    });
+  }
+
+  // ---- combinations -------------------------------------------------------------------
+
+  /** Mid-drag combination values, same contract as `pending` for program parameters. */
+  private readonly pendingCombi = new Map<string, number | string>();
+
+  setMode(mode: 'PROGRAM' | 'COMBI'): void {
+    m1Store.setMode(mode);
+    // Notes belonging to the old mode's timbres would keep sounding against the new mode's
+    // configuration, on slots the new timbres do not own.
+    this.allNotesOff();
+    this.refresh();
+  }
+
+  setCombiParam(id: string, value: number | string): void {
+    this.pendingCombi.delete(id);
+    m1Store.setCombiParam(id, value);
+    this.pushTimbres();
+  }
+
+  /** Mid-drag: push without a store write, exactly as `previewParam` does. */
+  previewCombiParam(id: string, value: number | string): void {
+    this.pendingCombi.set(id, value);
+    this.pushTimbres();
+  }
+
+  setCombiParams(patch: Record<string, number | string>): void {
+    for (const id of Object.keys(patch)) this.pendingCombi.delete(id);
+    m1Store.setCombiParams(patch);
+    this.pushTimbres();
+  }
+
+  setCombiType(type: string): void {
+    m1Store.setCombiType(type);
+    this.allNotesOff();
+    this.pushTimbres();
+  }
+
+  setTimbreSolo(timbre: number, on: boolean): void {
+    m1Store.setTimbreSolo(timbre, on);
+    this.pushTimbres();
   }
 
   // ---- performance ------------------------------------------------------------------------
 
-  noteOn(note: number, velocity = 100): void {
-    if (!this.node) return;
-    this.heldNotes.add(note);
-    this.node.port.postMessage({ type: 'noteOn', note, velocity });
+  /**
+   * `channel` defaults to the GLOBAL channel, which is what the on-screen keybed plays on.
+   * Manual p.73: "When playing the keyboard of the M1, only the Timbres which are set to the
+   * same channel as the MIDI Global channel will sound." Web MIDI passes its own channel, so
+   * a multi-channel controller can drive eight timbres independently.
+   */
+  private get keyboardChannel(): number {
+    return Math.max(0, m1Store.getState().keyboard.midiChannel);
   }
 
-  noteOff(note: number): void {
+  noteOn(note: number, velocity = 100, channel = this.keyboardChannel): void {
+    if (!this.node) return;
+    this.heldNotes.add(note);
+    this.node.port.postMessage({ type: 'noteOn', note, velocity, channel });
+  }
+
+  noteOff(note: number, channel = this.keyboardChannel): void {
     this.heldNotes.delete(note);
-    this.node?.port.postMessage({ type: 'noteOff', note });
+    this.node?.port.postMessage({ type: 'noteOff', note, channel });
   }
 
   setSustain(down: boolean): void {
