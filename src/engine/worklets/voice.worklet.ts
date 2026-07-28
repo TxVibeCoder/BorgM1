@@ -18,12 +18,16 @@
  * dead instrument.
  */
 
+import type { EffectsState } from '../../../data/effectParams';
+import { EffectChain, MAX_FX_BLOCK } from '../dsp/fx/effectChainCore';
 import { VoiceEngine, type OscConfig } from '../voice/voiceEngineCore';
 import type { SerializedOsc, SerializedProgram } from '../voiceMessages';
 
 type InMessage =
   | { type: 'bank'; pcm: Float32Array }
   | { type: 'program'; program: SerializedProgram }
+  | { type: 'effects'; effects: EffectsState }
+  | { type: 'dacModel'; on: boolean }
   | { type: 'noteOn'; note: number; velocity: number }
   | { type: 'noteOff'; note: number }
   | { type: 'sustain'; down: boolean }
@@ -33,6 +37,15 @@ type InMessage =
 
 class VoiceProcessor extends AudioWorkletProcessor {
   private engine: VoiceEngine;
+  /**
+   * The master effect section, downstream of every voice.
+   *
+   * It lives HERE rather than inside VoiceEngine because it is genuinely a different stage:
+   * the M1 sums all 16 oscillator slots into four effect buses and the effects run once on
+   * the sum, not once per voice. Putting it in the engine would also make the Phase 2
+   * golden-buffer tests measure the effects, which is precisely what they must not do.
+   */
+  private effects: EffectChain;
   /**
    * The whole factory bank as float, transferred ONCE. Programs then carry only offsets,
    * so a program change moves two 32 KB keymaps rather than 50 MiB of audio.
@@ -44,6 +57,7 @@ class VoiceProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this.engine = new VoiceEngine(sampleRate);
+    this.effects = new EffectChain(sampleRate);
     this.port.onmessage = (e: MessageEvent<InMessage>) => this.onMessage(e.data);
   }
 
@@ -84,6 +98,12 @@ class VoiceProcessor extends AudioWorkletProcessor {
             osc: [this.hydrate(msg.program.osc[0]), this.hydrate(msg.program.osc[1])],
           });
           break;
+        case 'effects':
+          this.effects.set(msg.effects);
+          break;
+        case 'dacModel':
+          this.effects.setDacModel(msg.on);
+          break;
         case 'joystick':
           this.engine.setJoystick(msg.x, msg.y);
           break;
@@ -101,6 +121,9 @@ class VoiceProcessor extends AudioWorkletProcessor {
           break;
         case 'allNotesOff':
           this.engine.allNotesOff();
+          // Kill the effect tails too. A panic that leaves a 9.9 s hall ringing has not
+          // panicked; it has just stopped the notes.
+          this.effects.reset();
           break;
       }
     } catch {
@@ -126,6 +149,13 @@ class VoiceProcessor extends AudioWorkletProcessor {
 
     try {
       this.engine.render(l, r, count);
+      // The effect section runs on the SUM of every voice, in its own fixed-size chunks.
+      // Reading the host's quantum here would be the same mistake CLAUDE.md forbids on the
+      // control path — and the chain's scratch buffers are sized once, at MAX_FX_BLOCK.
+      for (let done = 0; done < count; done += MAX_FX_BLOCK) {
+        const chunk = Math.min(MAX_FX_BLOCK, count - done);
+        this.effects.process(l.subarray(done, done + chunk), r.subarray(done, done + chunk), chunk);
+      }
     } catch {
       // Silence this block and every one after it, but KEEP RETURNING TRUE. Letting the
       // throw escape would permanently kill the node; this way the instrument goes quiet

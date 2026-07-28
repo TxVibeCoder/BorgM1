@@ -569,3 +569,169 @@ Drum Kits is Phase 5/6 work, not Phase 3's.
 
 **No program browser, no WRITE, no COMPARE.** Phase 6 owns the browser; the name field is
 display-only for now.
+
+---
+
+## 2026-07-28 — Phase 4: effects
+
+### The spec was located and then CHECKED, which mattered more than locating it
+
+The 25-byte block and all 33 algorithms came off Owner's Manual **p.129**, exactly as PLAN.md
+promised. Two further sources turned out to matter as much:
+
+- **M1R Owner's Manual pp.56-57, "EFFECT PARAMETERS DEFAULT VALUES CHART"** (`pages/b056.png`,
+  `b057.png`) — the official effect NAMES, every algorithm's DEFAULT values, and the asterisks
+  that drive the pairing restriction, which p.129 does not carry. It also states the pairing
+  rule verbatim. **Its A..H columns are the hardware's eight DISPLAY positions, not byte
+  offsets**, and the two orders differ: a reverb's row reads Reverb Time / Pre Delay / E/R
+  Level / High Damp for bytes 00 / 03 / 04 / 02. Conflating them is the easiest available
+  mistake and would have mis-defaulted half the catalogue.
+- **Korg's factory preload**, histogrammed by the new `npm run probe:effects`. p.129 left three
+  questions genuinely ambiguous and the data settled all three.
+
+**The type byte is the effect number MINUS ONE; 0x21 means Through.** The two decoders in the
+research payload contradict each other on this (`fx2.py` reads the byte as the effect number,
+`final.py` adds one). Settled non-circularly: under `byte+1`, I17 `Organ 2` decodes to Stereo
+Chorus 1 at depth 99 with EQ +12/+12 into a 3.5 s Hall, and I00 `Universe` to a 247/414 ms
+stereo delay — the exact figures PLAN.md quotes from a separate source, three independent
+numbers landing at once. The rival reading also puts **8 of 12** Early Reflection times outside
+their documented range. `fx2.py` is the earlier exploratory pass and is wrong.
+
+**MG Status bit1 (phase) is editable DATA, and it is what separates the `I`/`II` variants.**
+The operation manual says so in prose — *"Stereo ChorusI ... phase inversion of the two
+circuits. Stereo ChorusII has no phase inversion"*, and likewise for Phaser and Tremolo — and
+the factory bank agrees: **bit1 is set on 51 of 54 `I`-variant slots and clear on all 3 `II`
+slots, and it VARIES within a single effect number**, so it is data rather than a constant
+implied by the algorithm. p.129's per-cell arrow notes read the other way round; the prose and
+the measurement agree with each other and outvote an ambiguous notation. This is what makes
+PLAN.md's "four fewer implementations" real: chorus/flanger/phaser/tremolo are one block, and
+`I`/`II` is one bit.
+
+**For the dual algorithms 26-33 a slot's two balance bytes are the two HALVES' dry:wet, not a
+left/right pair.** The quick reference lists two separate `Dry:EFF` controls for `Delay/Hall`
+and pp.56-57 give two separate defaults. MEASURED, and the split is total: across the factory
+bank the two bytes are **equal in 196 of 196** slots holding a stereo effect (1-25) and
+**unequal in 4 of 4** slots holding a dual one.
+
+**Bit 5 of the I/O byte is real, undocumented, and preserved rather than guessed at.** p.129
+specifies `bit4~0`; 33 of 100 factory programs set a bit 5, only ever alongside all four
+channel enables, correlating with nothing testable — not oscillator mode, not output pan, not
+either effect type, not the balances. It is carried verbatim in `ioReserved` so a factory
+import is lossless. Preserving an honest unknown beats inventing a meaning for it.
+
+**Six factory bytes sit one past the range p.129 documents** (an E/R Level or Drive of 100
+where `00~63 : 00~99` allows 99; an Exciter Emphatic Point of 11 where `00~09 : 01~10` allows
+10). The manual is explicit and is treated as the authority; the clamp costs under 0.1 dB on 6
+of ~800 bytes. Recorded because it is the kind of thing a later session would otherwise
+rediscover as a bug. Round-trip is **91/100 byte-exact**, and the residue is only this plus two
+programs carrying junk in MG-Status bits 3-4, which p.129 does not define.
+
+### Structure
+
+**The effect section runs in the worklet, DOWNSTREAM of the voice engine, not inside it.** The
+M1 sums all 16 oscillator slots into the effect buses and the effects run once on the sum. It
+also keeps the Phase 2 golden buffers measuring the voice engine alone, which is exactly what
+they must keep measuring.
+
+**Thirty-three algorithms collapse into nine DSP blocks**, and that collapse is Korg's own
+structure rather than a simplification — the `Delay/X` family is literally a delay feeding one
+of the others. Reverb, early reflection, delay, modulation, EQ, drive, exciter, symphonic,
+rotary.
+
+**`Dry:EFF` is a CROSSFADE, not a send.** The display reads `60:40`, the halves sum to 100, and
+the byte is the effect half, so `out = dry*(1-w) + wet*w`. The alternative reading — dry at
+unity with wet added on top — is up to 6 dB louder and is precisely the error PLAN.md warns
+about ("Korg's own emulation had wet levels globally too hot"). I17's hall sits at 18.
+
+**PROGRAM MODE CANNOT REACH EFFECT 2 IN PARALLEL, and that is the hardware.** A program has no
+panpot page, so it is hard-wired 5:5 into buses A/B, and in PARALLEL the A/B path stops at
+effect 1. Switching a Program to PARALLEL therefore silences effect 2 entirely. It looks like a
+fault, so the panel LABELS it (`NOT IN PATH — PARALLEL`) rather than leaving a live-looking row
+of knobs that change nothing. Phase 5's Combinations get a real panpot and can feed C/D.
+
+**The pairing restriction is enforced in three places, and the UI one is the visible one.** The
+selector STEPS OVER the barred entries rather than accepting a choice and having it rejected
+somewhere invisible — verified in the running app, where the slot-1 stepper jumps 11 → 20 with
+Symphonic Ensemble in slot 2. It is also enforced in `coalesceEffectsState` (slot 2 yields) and
+in `setEffectType`, so MIDI and a hand-edited bundle cannot route around the panel.
+
+**The breathing noise floor is modelled with NO PRNG.** A 16-bit DAC behind a 3-bit gain range,
+where the range is chosen by a signal follower — so quantization error IS the noise, exactly as
+on the hardware, and it steps as a tail decays. CLAUDE.md is explicit that randomness in the
+signal path would cost the byte-exact golden-buffer tests, which are the sharpest tests in the
+project.
+
+### Undocumented curves added this phase — all CHOICES, not M1 facts
+
+Per-effect EQ shelf corners (500 Hz / 2 kHz, borrowed from Korg's own documented EQUALIZER
+defaults rather than invented) · chorus full-scale depth 5 ms and flanger 4 ms · phaser sweep
+100 Hz–4 kHz over six stages · reverb comb and allpass tunings · early-reflection tap pattern ·
+overdrive and distortion transfer curves · exciter band split · symphonic six-voice rates ·
+rotary base rates and crossover · tremolo SHAPE skew. Each is labelled at its definition and
+collected at the top of its file, because these are the numbers a future A/B will want to move.
+
+**The chorus sweep is UNIPOLAR — upward from the base delay, not around it.** Found by
+measuring in the browser: I17 sets DELAY TIME 0 with DEPTH 99, and a bipolar sweep spent half
+of every cycle clamped against the interpolator's minimum delay, which flattens one side of the
+modulation audibly. Unipolar also matches the parameter's own definition ("time between direct
+sound and effect sound", i.e. the floor of the sweep).
+
+### The bug the tests could not see, and the one they now can
+
+**`snapEffectValue` silently rewrote PHASE '180' to '0' — turning every `I` variant into its
+`II`.** `encodeValue` returned the bare bit VALUE for the sub-byte codecs while `decodeValue`
+read a bit POSITION, so round-tripping a value through both — which is exactly what grid
+snapping does — shifted it away. The block encode/decode round-tripped fine (a compensating
+shift lived in `encodeEffectParams`), the audibility sweep constructed params directly and
+never went through the snapper, and the panel coverage test does not run values. So **nothing
+in 900 tests caught it**; setting up the gate patch in the running app did, on the single most
+load-bearing bit in the phase.
+
+Fixed by making encode the exact inverse of decode — the bit is shifted into position at
+encode, and `encodeEffectParams` ORs rather than shifting again. One representation, one place
+to get it wrong. The test added for it asserts the GENERAL form (snapping is identity on every
+parameter of every algorithm, and idempotent) rather than the instance; mutating the shift back
+now fails six tests including two that already existed.
+
+**This is the fourth phase in which measuring the running app caught something unit tests could
+not, and the third in which a weak metric gave a confidently wrong answer.** The pitch probe
+here reported note 60 an octave low, because `Organ2` is a drawbar registration whose strongest
+partial is the 16' drawbar below the nominal pitch — the spectrum reads 131.8 / 260.7 / 392.6 /
+524.4 / 785.2 Hz, i.e. 0.5x, 1x, 1.5x, 2x, 3x of C4. Phase 3's 263.7 Hz reading was the 8'
+partial and was right. The measurement that settled it claimed only a RATIO through one
+detector (octave switch 2.0016, note transposition 2.0042), which is the technique DECISIONS.md
+has now recorded three times.
+
+### The fidelity gate
+
+`I17 Organ 2` is hand-entered from the decoded factory record, and **the decode corrects
+PLAN.md's description of it in four audible ways**: the oscillator is at **16'**, not 8'; its
+level is **30**, not the default 70; the filter is at **cutoff 70 with tracking 0** (the
+documented trap — 0 means 100% tracking), not wide open; and the amp release is 4, not 25. The
+envelopes do nothing, as PLAN.md says, but a patch built from "defaults plus Organ2 plus
+effects" would have been wrong in all four. Korg's low oscillator level is also what keeps the
+60%-wet chorus with +12/+12 EQ inside headroom.
+
+Measured in the browser at 48 kHz with both extensions OFF:
+
+- **RT60 3.61 s against a 3.5 s setting** (3% error), decay linear in dB across 3 s. That
+  validates the whole reverb-time chain: display value → byte → Schroeder comb feedback → decay.
+- **Stereo correlation −0.06** on a held chord from a mono source — a genuinely wide image,
+  which is the 180° phase inversion doing what the manual describes.
+- **Four-note chord peaks 0.72** pre-master; no clipping. A dense five-note chord low in the
+  register reaches 1.27, which the master stage's 0.8 gain and soft clip absorb.
+- Octave and transposition ratios exact (see above).
+
+**The listening half of the gate is NOT closed.** A/B against Robin S — "Show Me Love"
+(StoneBridge Mix) requires the recording, which this session had no way to obtain or hear.
+Everything measurable is measured and recorded above; a 7.17 s stereo WAV of the patch
+(`BorgM1-I17-Organ2.wav`, normalised to −3 dBFS so it carries timbre rather than the master
+limiter) was rendered for that comparison to be made by ear. **If it does not match, the first
+numbers to move are the per-effect EQ shelf corners and the chorus depth constant**, both
+labelled and collected at the top of their files for exactly that reason.
+
+### Still open
+
+**The negative-cutoff-tracking question from Phase 3 is NOT settled**, because settling it
+needed the A/B that did not happen. I17 uses tracking `0` (full tracking) and never a negative
+value, so the gate patch exercises neither reading. It stays as Phase 3 left it.

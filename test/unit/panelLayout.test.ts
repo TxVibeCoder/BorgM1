@@ -9,12 +9,17 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { EFFECT_ALGORITHMS, effectAlgorithm, toEffectControlDef } from '../../data/effectParams';
 import { isOsc2Param, PROGRAM_PARAMS, programParam } from '../../data/programParams';
+import { validateControlDefs, type ControlDef } from '../../data/schema';
 import {
+  CELL,
+  cellAt,
   columnsFor,
   flowSections,
   PAGE_LAYOUTS,
   PAGES,
+  PARAM_PAGES,
   paramIdFor,
   REGIONS,
   rowsFor,
@@ -26,7 +31,7 @@ import { STAGE } from '../../src/ui/stage';
 /** Every parameter id the panel renders, across all pages, both oscillators. */
 function renderedIds(): Set<string> {
   const ids = new Set<string>();
-  for (const page of PAGES) {
+  for (const page of PARAM_PAGES) {
     const layout = PAGE_LAYOUTS[page];
     const sections: ParamSection[] = [...layout.left, ...layout.centre];
     for (const s of sections) {
@@ -63,7 +68,7 @@ describe('panel layout — coverage', () => {
 
   it('references only real parameters', () => {
     // A typo in a section's list would silently render nothing; `programParam` throws.
-    for (const page of PAGES) {
+    for (const page of PARAM_PAGES) {
       const layout = PAGE_LAYOUTS[page];
       for (const s of [...layout.left, ...layout.centre]) {
         for (const p of s.params) {
@@ -80,7 +85,7 @@ describe('panel layout — coverage', () => {
     // THE `1`/`2` RULE. A per-oscillator section declares the un-prefixed name once and is
     // instantiated twice; hard-coding a prefix would pin that entry to one oscillator and
     // is exactly how the two halves start to drift.
-    for (const page of PAGES) {
+    for (const page of PARAM_PAGES) {
       const layout = PAGE_LAYOUTS[page];
       for (const s of [...layout.left, ...layout.centre]) {
         if (!s.perOsc) continue;
@@ -99,6 +104,77 @@ describe('panel layout — coverage', () => {
     const fraction = osc2 / PROGRAM_PARAMS.length;
     expect(fraction).toBeGreaterThan(0.3);
     expect(fraction).toBeLessThan(0.45);
+  });
+});
+
+/**
+ * The FX page's counterpart to the coverage test above.
+ *
+ * An effect slot's parameter list is DYNAMIC — it comes from whichever of the 33 algorithms
+ * is loaded — so "is it on a page?" has to be asked differently: every algorithm must FIT in
+ * the box, and every parameter must project onto a control the panel can actually render.
+ * The failure being guarded against is the same one the program-parameter test caught in
+ * Phase 3: a parameter that exists, reaches the engine, and is unreachable from the panel.
+ */
+describe('panel layout — the FX page', () => {
+  /** The slot box App.tsx builds: the left column, halved. */
+  const fxBox = { ...REGIONS.left, h: (REGIONS.left.h - 12) / 2 };
+  /** Title bar plus the algorithm selector strip, both sitting above the parameter grid. */
+  const HEADROOM = 60;
+
+  it('is a page you can navigate to, and is not a parameter page', () => {
+    expect(PAGES).toContain('FX');
+    expect(PARAM_PAGES).not.toContain('FX');
+  });
+
+  it('fits every algorithm inside a slot box, its two balance knobs included', () => {
+    const cols = columnsFor(fxBox.w);
+    for (const algo of EFFECT_ALGORITHMS) {
+      // +2 for the two Dry:EFF knobs, which are SLOT parameters rather than algorithm
+      // parameters but still have to be placed.
+      const cells = algo.params.length + 2;
+      const needed = HEADROOM + rowsFor(cells, cols) * CELL.h;
+      expect(
+        needed,
+        `#${algo.index} ${algo.name} needs ${needed}px of ${fxBox.h.toFixed(0)}`,
+      ).toBeLessThanOrEqual(fxBox.h);
+      const last = cellAt(cells - 1, cols, fxBox.x, fxBox.y + HEADROOM);
+      expect(last.x + CELL.w / 2, `#${algo.index} ${algo.name} overflows to the right`).toBeLessThanOrEqual(
+        fxBox.x + fxBox.w + 0.001,
+      );
+    }
+  });
+
+  it('projects every effect parameter onto a control the panel can render', () => {
+    // The same validator data/schema.ts runs over the program parameters. A knob with no
+    // range, or a switch with one position, renders as a DEAD control rather than an error —
+    // so it is caught here instead of in the browser.
+    for (const algo of EFFECT_ALGORITHMS) {
+      const defs: ControlDef[] = algo.params.map((p) => ({
+        ...(toEffectControlDef(p) as ControlDef),
+        // Ids are unique within an algorithm, not globally; qualify them so the duplicate
+        // check is asking a fair question.
+        id: `FX_${algo.index}_${p.id}`,
+      }));
+      const errors = validateControlDefs(`effect ${algo.index} ${algo.name}`, defs);
+      expect(errors, errors.join('\n')).toEqual([]);
+    }
+  });
+
+  it('gives every algorithm at least one editable parameter', () => {
+    // An algorithm that reached the catalogue with an empty list would render an empty box
+    // and look deliberate.
+    for (const algo of EFFECT_ALGORITHMS) {
+      expect(algo.params.length, `#${algo.index} ${algo.name}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps every algorithm name short enough for the selector\'s LCD field', () => {
+    for (let t = 0; t <= EFFECT_ALGORITHMS.length; t++) {
+      const name = t === 0 ? 'NO EFFECT' : effectAlgorithm(t)!.name;
+      expect(name.length, `type ${t}`).toBeGreaterThan(0);
+      expect(name.length, `type ${t} name "${name}" overflows the field`).toBeLessThanOrEqual(16);
+    }
   });
 });
 
@@ -125,7 +201,7 @@ describe('panel layout — geometry', () => {
   });
 
   it('flows every section inside its column, in order', () => {
-    for (const page of PAGES) {
+    for (const page of PARAM_PAGES) {
       const layout = PAGE_LAYOUTS[page];
       for (const [sections, region] of [
         [layout.left, REGIONS.left],
@@ -147,7 +223,7 @@ describe('panel layout — geometry', () => {
   });
 
   it('gives every section at least one column and one row', () => {
-    for (const page of PAGES) {
+    for (const page of PARAM_PAGES) {
       const layout = PAGE_LAYOUTS[page];
       for (const [sections, region] of [
         [layout.left, REGIONS.left],

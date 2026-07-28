@@ -17,6 +17,7 @@ import { REGIONS, PAGE_LAYOUTS, flowSections, type PageId } from './panel/layout
 import { STAGE } from './stage';
 import { ErrorOverlay } from './ErrorOverlay';
 import { AmpEgGraph, FilterEgGraph } from './panel/EgGraph';
+import { EffectRoutingSection, EffectSlotSection } from './panel/EffectSection';
 import { Header, TabStrip } from './panel/Header';
 import { Joystick } from './panel/Joystick';
 import { Section } from './panel/Section';
@@ -83,9 +84,17 @@ export function App() {
       .then(setMidiStatus);
   }, [status.powered, noteOn, noteOff]);
 
-  const layout = PAGE_LAYOUTS[page];
+  // The FX page is laid out by EffectSection, not by a declared parameter list — see PAGES.
+  const isFx = page === 'FX';
+  const layout = PAGE_LAYOUTS[isFx ? 'EASY' : page];
   const leftBoxes = useMemo(() => flowSections(layout.left, REGIONS.left), [layout]);
   const centreBoxes = useMemo(() => flowSections(layout.centre, REGIONS.centre), [layout]);
+
+  // Two effect slots down the left column and the placement matrix in the centre. The two
+  // slots get equal height because neither is subordinate — SERIAL runs 1 into 2.
+  const fxH = (REGIONS.left.h - 12) / 2;
+  const fxTop = { ...REGIONS.left, h: fxH };
+  const fxBottom = { ...REGIONS.left, y: REGIONS.left.y + fxH + 12, h: fxH };
 
   const statusText = status.bankError
     ? `BANK ERROR: ${status.bankError}`
@@ -143,22 +152,32 @@ export function App() {
             />
             <TabStrip box={REGIONS.tabs} page={page} onSelect={setPage} />
 
-            {layout.left.map((section, i) => (
-              <Section
-                key={`${page}-l-${section.title}`}
-                section={section}
-                box={leftBoxes[i]!}
-                osc2Enabled={osc2Enabled}
-              />
-            ))}
-            {layout.centre.map((section, i) => (
-              <Section
-                key={`${page}-c-${section.title}`}
-                section={section}
-                box={centreBoxes[i]!}
-                osc2Enabled={osc2Enabled}
-              />
-            ))}
+            {isFx ? (
+              <>
+                <EffectSlotSection slot={1} box={fxTop} />
+                <EffectSlotSection slot={2} box={fxBottom} />
+                <EffectRoutingSection box={REGIONS.centre} />
+              </>
+            ) : (
+              <>
+                {layout.left.map((section, i) => (
+                  <Section
+                    key={`${page}-l-${section.title}`}
+                    section={section}
+                    box={leftBoxes[i]!}
+                    osc2Enabled={osc2Enabled}
+                  />
+                ))}
+                {layout.centre.map((section, i) => (
+                  <Section
+                    key={`${page}-c-${section.title}`}
+                    section={section}
+                    box={centreBoxes[i]!}
+                    osc2Enabled={osc2Enabled}
+                  />
+                ))}
+              </>
+            )}
 
             {/* TWO EG components, never one — the filter EG releases to a level and the amp
                 EG cannot. See panel/EgGraph.tsx. */}

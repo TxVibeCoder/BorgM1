@@ -57,3 +57,44 @@ export function useExtension(id: 'resonance' | 'insertFx'): boolean {
     () => m1Store.getExtension(id),
   );
 }
+
+// ---- effects ---------------------------------------------------------------------------
+//
+// Every one of these selects a PRIMITIVE, not the slot object. `useSyncExternalStore` bails
+// out with `Object.is`, and `setEffectParam` mutates the params bag in place — so a hook that
+// returned the slot would compare equal and never re-render, while one that returned a fresh
+// object would re-render everything on every frame of a drag. Primitives avoid both.
+
+/** Which algorithm a slot holds: 0 = NO EFFECT, 1..33. */
+export function useEffectType(slot: 1 | 2): number {
+  return useSyncExternalStore(
+    (cb) => m1Store.subscribe(cb),
+    () => m1Store.getEffectSlot(slot).type,
+    () => m1Store.getEffectSlot(slot).type,
+  );
+}
+
+export function useEffectParam(slot: 1 | 2, id: string): number | string {
+  return useSyncExternalStore(
+    (cb) => m1Store.subscribe(cb),
+    () => m1Store.getEffectParam(slot, id) ?? 0,
+    () => m1Store.getEffectParam(slot, id) ?? 0,
+  );
+}
+
+export function useEffectBalance(slot: 1 | 2, which: 'A' | 'B'): number {
+  const read = () => {
+    const s = m1Store.getEffectSlot(slot);
+    return which === 'A' ? s.balanceA : s.balanceB;
+  };
+  return useSyncExternalStore((cb) => m1Store.subscribe(cb), read, read);
+}
+
+/** true = SERIAL, false = PARALLEL. */
+export function useEffectSerial(): boolean {
+  return useSyncExternalStore(
+    (cb) => m1Store.subscribe(cb),
+    () => m1Store.effects.serial,
+    () => m1Store.effects.serial,
+  );
+}
