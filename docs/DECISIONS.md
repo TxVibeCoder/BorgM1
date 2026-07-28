@@ -309,3 +309,91 @@ edge, under-reads the waveform's natural step size by orders of magnitude, and c
 loop broken. Fixed by scanning the whole loop. The question the metric asks is "is the move at
 the wrap unusual **for this waveform**?", and that only works if the scale comes from the whole
 waveform.
+
+---
+
+## 2026-07-28 — Phase 2: voice engine
+
+**Sixteen oscillator slots, not sixteen voices — one rule, everywhere.** SINGLE and DRUMS cost
+one, DOUBLE costs two. That gives 16-voice single and 8-voice double from the same pool, and
+will give Combinations their "no per-program limit, but never more than 16 total" with no
+special-casing anywhere else. **DOUBLE claims both slots or neither**: a half-voice is one
+oscillator of a two-oscillator patch at the wrong level and the wrong timbre, which is worse
+than dropping the note.
+
+**Same-note-first is a hard rule that runs before any scoring**, not a weight. No weighting can
+express "this is the same note". Without it a trill against long release tails stacks a fresh
+copy per retrigger until 16 slots hold 16 copies of two notes; the test plays 40 such events
+and asserts the pool never exceeds two.
+
+**Steal weights are a CHOICE, not a measurement** — the M1's rule is unpublished. FluidSynth's
+are a defensible starting point. Two corrections were needed:
+
+- **Direction.** PLAN.md lists the age term as "+1000/sec" without stating a sign convention.
+  Read literally under keep-the-highest it protects old notes and steals fresh ones — the note
+  you just played is the one that goes silent. Implemented so age *increases* stealability.
+- **Saturation.** Unbounded age swamps everything: a pad held 5 s scored 5000 and outranked a
+  note released an instant ago at 2000, so the still-sounding pad was stolen and the fading one
+  spared; past ~10 s only age mattered at all. Age now saturates just under the `sustained`
+  weight, restoring released > sustained > held with age ordering *within* a state — while
+  keeping the published 1000/sec as the slope near zero, where it actually discriminates.
+
+**ONE envelope configured three ways, not three classes.** The filter EG releases to a *level*
+and the amp EG to zero — that asymmetry is why UI-SPEC calls for two EG graph components, and
+modelling it once here is what keeps them honest. **Release is clamped to a 5 ms floor**: a
+release time of 0 is a reachable parameter value, not an edge case, and an instant drop to zero
+clicks on every note-off.
+
+**The filter is a TPT state-variable, not a cascade of one-poles — because resonance could not
+resonate.** A one-pole cascade with global negative feedback cannot produce a peak at two poles;
+the loop needs 180° of phase shift, which takes four. The first implementation shipped a
+"resonance" control that only ever attenuated. An SVF resonates correctly at 12 dB/oct, and
+`k = 2` (critically damped, monotonic, no peak anywhere) is resonance-off — so the extension
+genuinely defaults to the hardware's signal path, which the Phase 4 gate depends on.
+
+**Determinism is a feature, deliberately preserved.** No PRNG and no wall clock in the signal
+path; time arrives as a frame count. That is what lets the Phase 2 gate be a **byte-exact**
+render comparison rather than a spectral tolerance band — a band would pass a change that
+shifts every sample by half a bit, and the exact test does not. A single `Math.random` for
+"analogue drift" would cost the sharpest test in the project.
+
+### Two bugs the browser found that unit tests could not
+
+**All 23 synthesized multisounds were silent.** The DWGS tables skip `bakeSample` — there is
+nothing to resample and the loop is already exact — and skipped the **guard region** with it. A
+256-sample table with `loopEnd` 256 makes the 4-point interpolator read `data[256]` and
+`data[257]` off the end: `undefined`, then NaN, then silence. Every unit-test fixture went
+through `bakeSample`, so nothing caught it. One spectral measurement in the page did, because a
+pure sine read a centroid of 0 Hz. Fixed **at the source** (`renderRecipe` emits the guard, so
+no caller can forget), plus a build-time invariant and a test that renders every recipe through
+the real player.
+
+**Envelope resolution was tied to the host's block size.** Advancing envelopes once per render
+quantum made the same 1 ms attack a 4 ms ramp at 128 frames and a 32 ms ramp at 1024. CLAUDE.md
+already forbids reading the quantum as 128; this is the same rule applied to the *control* path.
+The engine now subdivides into fixed **32-frame control blocks**, and a test asserts 8×128 and
+1×1024 agree.
+
+**The lesson worth keeping:** both bugs were in the seam between correct components, which is
+exactly where unit tests are blind. Measuring the real graph in the page is not a nicety at the
+end of a phase — it is the only thing that tests either of these.
+
+### Wiring
+
+**The bank goes in the Cache API and converts to float once at load.** IndexedDB deserializes on
+retrieval, so it would pay a full structured-clone pass on every open of a 50 MiB blob.
+Converting Int16→float once costs 100 MiB resident and buys removing a multiply and a type
+conversion from the innermost loop of the engine, for every voice, forever. PC-only target;
+memory is cheap, the render budget is not.
+
+**PCM is transferred to the worklet, not cloned**, and programs then carry only offsets — so a
+program change moves two 32 KB keymaps rather than 100 MiB of audio.
+
+**`process()` is wrapped and returns true even on a throw.** An uncaught throw there silences
+the node permanently, with no error and no recovery. The guard is the difference between one bad
+block and a dead instrument.
+
+**Verified in the browser, at 48 kHz against a 32 kHz bank:** one note peaks 0.56, a four-note
+chord 1.19, release returns to exact silence and frees the slot, 20 notes into a 16-slot pool
+steals cleanly with every sample finite, DOUBLE claims two slots per note. The sine's centroid
+landing on 268 Hz for note 60 (C4 = 261.6 Hz) validates the whole pitch chain end to end.
