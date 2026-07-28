@@ -6,25 +6,33 @@ coordinates are SVG viewBox units that map 1:1 to stage px — every panel's vie
 its stage region (`stage.ts`; the stage itself is a 1400×800 **7:4** design box, uniformly
 scaled to the window by `App.tsx`).
 
-> **What exists today (end of Phase 3):** the stage transform, `theme.ts`, `types.ts`, the four
-> SVG controls, the keybed, and the **panel** — `panel/layout.ts` (regions + the five page
-> definitions), `panel/Section.tsx`, `panel/ParamControl.tsx`, the two `panel/EgGraph.tsx`
-> components, `panel/Header.tsx`, `panel/Joystick.tsx`, and `useControl.ts`. The Phase 2 rig
-> and every `.rig__*` class are gone, as this note said they should be.
+> **What exists today (end of Phase 5):** the stage transform, `theme.ts`, `types.ts`, the four
+> SVG controls, the keybed, the **program panel** — `panel/layout.ts` (regions plus the five
+> program pages and the Combination page), `panel/Section.tsx`, `panel/ParamControl.tsx`, the
+> two `panel/EgGraph.tsx` components, `panel/Header.tsx`, `panel/Joystick.tsx`, `useControl.ts`
+> — the **FX page** (`panel/EffectSection.tsx`), and **COMBI mode**: `panel/TimbreStrip.tsx`,
+> `panel/CombiSection.tsx` and `useCombi.ts`. The Phase 2 rig and every `.rig__*` class are
+> gone, as this note said they should be.
 >
-> The data-flow rules below are now a description of running code. Two additions worth knowing
-> before you touch the panel:
+> The data-flow rules below are now a description of running code. Three additions worth
+> knowing before you touch the panel:
 >
 > - **The drag path does not write the store.** `engineBridge.previewParam` pushes the engine
 >   only; `setParam` commits. A knob fires `onInput` per pointermove and a store write notifies
 >   every subscriber, so routing the drag through the store re-renders 139 controls per frame.
-> - **`useControl` reads scalars, never `getState()`.** `getState()` deep-copies through the
->   JSON codec, so as a `useSyncExternalStore` snapshot it returns a fresh object every call and
->   defeats the `Object.is` bail-out entirely. The store exposes `getProgramParam`,
->   `programName` and `getExtension` for exactly this.
+>   `previewCombiParam` / `setCombiParam` are the Combination twins, and the timbre strip's
+>   level slider uses them for the same reason.
+> - **`useControl` and `useCombi` read scalars, never `getState()`.** `getState()` deep-copies
+>   through the JSON codec, so as a `useSyncExternalStore` snapshot it returns a fresh object
+>   every call and defeats the `Object.is` bail-out entirely. The store exposes
+>   `getProgramParam`, `getCombiParam`, `programName`, `combiName`, `combiType`, `mode` and
+>   `getExtension` for exactly this. Eight timbre rows of six controls is 48 subscriptions; a
+>   hook returning an object here would re-render all of them on every frame of a drag.
+> - **The FX panel serves both modes without knowing which.** A Combination has its own 25-byte
+>   effect block, so the store's effect methods resolve by `mode`. Do not branch in the UI.
 >
-> **Not built yet:** the Phase 6 browser modal, the Combination timbre strip (Phase 5), and the
-> insert-FX rack (Phase 4).
+> **Not built yet:** the Phase 6 browser modal, and the insert-FX rack (a plugin-era extension —
+> the strip's per-row `IFX` button ships visibly inert rather than absent).
 
 ## Data flow — non-negotiable
 
@@ -81,7 +89,20 @@ scaled to the window by `App.tsx`).
   the amp EG trace falls to zero because there is no release level. That asymmetry is engine
   behaviour showing through, not a drawing detail.
 - **Disabled is a first-class visual**, designed rather than bolted on — roughly a third of
-  the centre column greys in SINGLE mode.
+  the centre column greys in SINGLE mode, and the timbre strip greys every row the current
+  Combination type does not use.
+- **The strip is a different control idiom from the panel, and deliberately so.** UI-SPEC
+  measured the left column as steppers, sliders, small rotaries and dropdowns — not the knob
+  grid — and eight rows at 58 px each is below the 66 px a knob cell needs. Its geometry lives
+  in `TIMBRE_ROW` (`panel/layout.ts`) so the layout audit can check the row rather than trust
+  it. Never place a strip control by a literal.
+- **A row that cannot sound says so.** `WINDOW EMPTY` / `MUTED` / `NOT SOLOED`, dimmed in
+  place. This is load-bearing rather than decorative: Phase 5 stopped silently ordering an
+  inverted window, because an empty window is the hardware's own mechanism — so the cause has
+  to be visible instead. See `DECISIONS.md`.
+- **`OUT` is a VIEW of the panpot, not a second control.** `1+2` is its A/B half and `3+4` its
+  C/C+D/D half. One byte, two renderings; the view holds no state of its own, which is what
+  stops the two disagreeing.
 - **Hue signals mode** (`theme.ts` ACCENT): lime edits, blue browses, green marks the
   selected timbre row. Do not mix them.
 - **Say `FILTER` and `AMP` in the UI.** `VDF`/`VDA` are the manufacturer's nomenclature; keep
