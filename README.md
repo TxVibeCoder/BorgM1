@@ -50,6 +50,7 @@ copy. The output lands in `public/bank/` (gitignored). Sources and licences are 
 
 | Document | What it is |
 |---|---|
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | **Picking the work back up? Start here.** |
 | [`CLAUDE.md`](CLAUDE.md) | The non-negotiable conventions. Read first. |
 | [`docs/PLAN.md`](docs/PLAN.md) | **The phased build plan, with status.** Start here to build. |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Dated decision log. Append, don't rewrite. |
