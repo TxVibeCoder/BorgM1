@@ -6,6 +6,14 @@ coordinates are SVG viewBox units that map 1:1 to stage px — every panel's vie
 its stage region (`stage.ts`; the stage itself is a 1400×800 **7:4** design box, uniformly
 scaled to the window by `App.tsx`).
 
+> **What exists today (end of Phase 2):** the stage transform, `theme.ts`, `types.ts`, the four
+> SVG controls, the keybed, and a deliberately plain **rig** in `App.tsx` — power, sound select,
+> osc mode, octave. The rig is a harness for hearing the engine, not a draft of the panel; none
+> of its `.rig__*` classes should survive Phase 3.
+>
+> **Not built yet:** the panel regions, `useControl`, and the EG graph components. The data-flow
+> rules below are the contract Phase 3 builds *to*, not a description of running code.
+
 ## Data flow — non-negotiable
 
 - The engine is a singleton OUTSIDE React; React reads a store and calls imperative setters.

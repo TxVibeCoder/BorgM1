@@ -6,6 +6,29 @@ preserved 2026-07-27 from a session scratchpad that would otherwise have been cl
 Move it to `research/` inside this project (and gitignore it) if you'd rather have everything in
 one tree. It is deliberately *not* committed — most of it is scanned PDFs.
 
+## What has been extracted so far
+
+Findings are transcribed into the repo as they are used, so the research payload is a source,
+not a dependency — the build does not read it.
+
+| Extracted | Lives in | Phase |
+|---|---|---|
+| The 100-multisound and 44-drum lists | `data/sounds.ts` | 1 |
+| `NT` = No Tracking, confirmed verbatim from the manual | `data/sounds.ts` | 1 |
+| Multisounds have a limited pitch range and may not sound high up | `bank.json` key ranges | 1 |
+
+**Still to extract**, in the phase that needs it:
+
+| Not yet extracted | Needed by |
+|---|---|
+| The 143-byte Program Parameter table (every parameter, range, and the EG-time bitfield packing) | Phase 3 |
+| The 33 effect algorithms and their quantization grids | Phase 4 |
+| The 124-byte Combination table | Phase 5 |
+| `preload/final.py` — the 100 factory programs and 100 combinations | Phase 6 |
+
+**The SF2 is not here.** FluidR3_GM lives outside the payload; `scripts/bankConfig.ts` resolves
+it from `$BORGM1_SF2`, then `assets/`, then a sibling project's copy.
+
 ## The important artifacts
 
 | Path | What it is |

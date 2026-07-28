@@ -3,22 +3,30 @@
 Eight phases. **Every phase ends with something you can play or hear** — no phase is pure
 plumbing. Estimates are focused sessions (roughly a working day).
 
-| # | Phase | Sessions | Ends with |
-|---|---|---|---|
-| 0 | Fork, gut, scaffold | 0.5 | An empty shell that boots and tests green |
-| 1 | Sample pipeline | 1.5–2 | A built sample bank on disk |
-| 2 | Voice engine | 2–3 | **Polyphonic playing from the keyboard** |
-| 3 | Program layer + panel UI | 2–3 | Every parameter editable and audible |
-| 4 | Effects | 3–4 | **First fidelity gate — `I17 Organ 2` by hand** |
-| 5 | Combinations | 1.5–2 | 8-timbre splits and velocity switches |
-| 6 | Browser + factory bank | 1–1.5 | **All 100 factory programs, loadable** |
-| 7 | Sequencer *(decide after 6)* | 2–3 | 8-track recording and playback |
+| # | Phase | Status | Sessions | Ends with |
+|---|---|---|---|---|
+| 0 | Fork, gut, scaffold | ✅ **done** | 0.5 | An empty shell that boots and tests green |
+| 1 | Sample pipeline | ✅ **done** | 1.5–2 | A built sample bank on disk |
+| 2 | Voice engine | ✅ **done** | 2–3 | **Polyphonic playing from the keyboard** |
+| 3 | Program layer + panel UI | ◀ **next** | 2–3 | Every parameter editable and audible |
+| 4 | Effects | | 3–4 | **First fidelity gate — `I17 Organ 2` by hand** |
+| 5 | Combinations | | 1.5–2 | 8-timbre splits and velocity switches |
+| 6 | Browser + factory bank | | 1–1.5 | **All 100 factory programs, loadable** |
+| 7 | Sequencer *(decide after 6)* | | 2–3 | 8-track recording and playback |
 
 **Phases 0–6 = ~12–16 sessions and a complete instrument.** Phase 7 is a separate decision.
 
+**Where things stand:** the instrument plays 16-voice polyphonic multisamples (8 in DOUBLE) from
+the on-screen keybed and over Web MIDI, with all 100 multisounds selectable. 324 unit tests,
+typecheck, build and bank build all clean. What is *not* built yet: the real parameter model
+(the program is a deliberately flat placeholder), effects, Combinations, and the browser.
+
+Every phase's decisions are recorded dated in `DECISIONS.md`; the notes below are the plan as
+written, kept intact so the plan and its outcome can be compared.
+
 ---
 
-## Phase 0 — Fork, gut, scaffold · 0.5
+## Phase 0 — Fork, gut, scaffold · 0.5 · ✅ DONE
 
 **Goal:** a booting shell with SynthStack's proven infrastructure and none of its engine.
 
@@ -37,9 +45,17 @@ green; the `vv` convention appears nowhere.
 
 > **Gate:** a JSON state round-trip test exists and passes. From day one, not retrofitted.
 
+**Outcome.** All gates met. The fork-point warning turned out stale — the PC-only UX pass had
+landed and merged, so `main` *was* the tree the brief wanted. Three deliberate departures from
+the keep-list, all toward a more thorough gut (`sampler.ts`, `ui/keyboard/*`, the Moog audio
+battery); `PresetPicker` was kept but dependency-injected, and its Node render harness lifted
+into `test/helpers/renderComponent.ts` where later phases can use it. Design box settled at
+1400×800 — exactly 7:4, and 1% lands on a whole 14×8 px so UI-SPEC's percentages convert
+without accumulating error.
+
 ---
 
-## Phase 1 — Sample pipeline · 1.5–2
+## Phase 1 — Sample pipeline · 1.5–2 · ✅ DONE
 
 **Goal:** a build-time script that turns CC-licensed sources into BorgM1's sample bank. This is
 **tooling, not runtime** — it runs in Node and commits its output, or is run on demand.
@@ -64,9 +80,20 @@ Spend the absent size ceiling on **denser key zones**, not longer samples or hig
 > discontinuity across the wrap. This is the bug that would otherwise surface as clicks on every
 > sustained note, three phases later.
 
+**Outcome.** `npm run build:bank` produces 50 MiB / 480 samples / 594 key zones, 100 multisounds
+and 44 drums, **451/451 loop seams within limit**. The gate runs on the build itself, so a bad
+bank cannot be produced — and it caught a bug in *itself* first, failing the square and saw
+tables because a tail-only window under-reads a flat waveform's natural step size.
+
+Only 63 multisounds actually needed sourcing: 14 are NT references that reuse a sibling's
+recording, 23 are the computed DWGS block. Two facts were **measured** rather than assumed
+(`scripts/probeSf2.ts`) and both changed the code: `spessasynth_core` already rebases loop
+points, and `loopEnd` is exclusive — which needed measuring because the library's own docs
+contradict each other.
+
 ---
 
-## Phase 2 — Voice engine · 2–3
+## Phase 2 — Voice engine · 2–3 · ✅ DONE
 
 **Goal:** play polyphonically. The core of the project.
 
@@ -98,11 +125,35 @@ clicks at loop seams, note-off, or voice steal.
 > spectral tolerance bands. Use the sharper tool. Plus explicit tests for the three click
 > sources: loop seam, a ~5 ms minimum release clamp, and the 4 ms forced fade on steal.
 
+**Outcome.** All gates met, all three click sources covered. Verified in the browser at 48 kHz
+against the 32 kHz bank, not only in tests.
+
+Three corrections to the specifics above, each recorded in `DECISIONS.md`: the steal weights
+needed a **direction** (as written, age protects old notes and steals the one you just played)
+and a **saturation** (unbounded age swamps the released/sustained terms entirely); and the
+filter had to become a TPT **state-variable** filter, because a one-pole cascade with global
+feedback cannot resonate at two poles — the first implementation shipped a resonance control
+that only attenuated.
+
+**Two bugs were found by measuring the running app, not by tests** — both in the seam between
+correct components, which is where unit tests are blind: every synthesized multisound was silent
+(the DWGS tables skipped `bakeSample` and lost their guard region with it), and envelope
+resolution was tied to the host's block size. Hence the standing rule in `CLAUDE.md`: drive the
+app and measure it before calling a phase done.
+
 ---
 
-## Phase 3 — Program layer + panel UI · 2–3
+## Phase 3 — Program layer + panel UI · 2–3 · ◀ NEXT
 
 **Goal:** every one of the 143 program parameters editable, and audible.
+
+**Starting from:** the engine already consumes a `ProgramConfig` (`voiceEngineCore.ts`) with
+per-oscillator level, octave, interval, detune, cutoff, EG intensity, cutoff tracking, velocity
+sensitivity and the three envelopes. What it is fed today is a deliberately flat placeholder
+built in `engineBridge.ts` — instant attack, full sustain, filter open — which is the shape
+`I17 Organ 2` itself uses. **Phase 3 replaces that placeholder, it does not extend it.** The
+serializable `program.params` bag in `src/state/m1State.ts` is where the real values live, and
+it already round-trips.
 
 Build the parameter model straight from the **143-byte SysEx table** in the research — every
 parameter, hex range, and the EG-time bitfield packing where enable and polarity are separate
@@ -138,6 +189,12 @@ is designed, not bolted on (a third of the centre column greys in SINGLE mode).
 
 **Goal:** the first real fidelity gate.
 
+**Starting from:** `context.ts` reserves an `insertSlot` in the master chain specifically so the
+effects section is a node swap rather than a refactor. Engine output is currently **mono** —
+that is deliberate, since the M1's stereo image comes from this section and its reverbs are
+mono-sum in / stereo out anyway. The `resonance` extension exists and defaults to 0; this gate
+must pass with it there.
+
 33 algorithms plus `No Effect`. Four fewer implementations than it looks — the `I`/`II` variants
 of Chorus, Flanger, Phaser and Tremolo are **one modulation block with a phase-invert bit**.
 
@@ -171,6 +228,11 @@ filter and amp envelopes, Stereo Chorus 1 at depth 99 with EQ +12/+12, into a 3.
 ## Phase 5 — Combinations · 1.5–2
 
 **Goal:** the workstation layer.
+
+**Starting from:** the allocator already models the pool the way this phase needs — 16 slots,
+atomic DOUBLE claims, per-slot channel — so "no per-program limit, but never more than 16 total"
+needs no new mechanism, only eight timbres pointed at the same `allocate`. `voiceAllocCore`
+already keys note-off and sustain by channel.
 
 **Five Combination types**, not one: `SINGLE`, `LAYER`, `SPLIT`, `VELOCITY SWITCH`, `MULTI`.
 Only MULTI exposes the 8-timbre matrix, and the other four have their own edit pages and SysEx

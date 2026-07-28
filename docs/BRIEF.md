@@ -1,9 +1,21 @@
 # Brief: BorgM1 — Korg M1 workstation emulator
 
-For: BorgM1 (new project)
-Directory: `<repo root>`   ← create and open Claude Code here
-Repo: `github.com/TxVibeCoder/BorgM1` (exists, **empty** — nothing to clone)
-Written: 2026-07-27
+Written: 2026-07-27 · **Founding brief, kept intact.**
+
+> **How to read this now.** This is the document the project was started from, preserved as
+> written so the plan and the outcome can be compared. Two parts have aged differently:
+>
+> - **"Reuse first — fork and gut" is HISTORY.** That work is done (Phase 0). The fork happened,
+>   the engine was deleted in one commit, and three deliberate departures from the keep-list
+>   below are recorded in `DECISIONS.md`. Do not work from that section.
+> - **"Watch out for" is STILL LIVE.** Every trap in it remains a trap, and several have already
+>   been confirmed against the real hardware manual and the real SoundFont. Read it.
+>
+> The **phase table below is superseded by `docs/PLAN.md`**, which numbers the last two phases
+> the other way round (PLAN: 6 = browser + factory bank, 7 = sequencer) and carries the live
+> status. PLAN.md is the build plan being followed.
+>
+> For current status, start at `docs/PLAN.md`. For what was decided and why, `docs/DECISIONS.md`.
 
 ---
 
@@ -34,7 +46,11 @@ was considered and **explicitly dropped** (it would mean C++/JUCE, discarding th
 Keeping DSP in pure `*Core.ts` files with no Web Audio types preserves a future C++ port at
 zero cost today.
 
-## Reuse first — fork and gut
+## Reuse first — fork and gut  ·  ✅ DONE, HISTORICAL
+
+> Completed in Phase 0. Kept for the record and for the *reasoning*; the file-by-file list below
+> no longer describes the tree. What actually survived is mapped in `README.md` under Layout,
+> and the departures from this list are in `DECISIONS.md`.
 
 Clone SynthStack, then **delete the engine in one commit before writing any M1 code.** A lazy
 gut leaves dead patchbay scaffolding that will quietly shape the voice code.
@@ -128,7 +144,11 @@ read them at block boundaries.
 
 ---
 
-## Phases
+## Phases  ·  ⚠ SUPERSEDED BY `docs/PLAN.md`
+
+> The ordering here was revised: PLAN.md makes 6 = browser + factory bank and 7 = sequencer,
+> which is the right way round — the factory bank is what makes the instrument usable, and the
+> sequencer is the severable one. **Use PLAN.md.** This table is left for the record.
 
 Each ends playable. Estimates are focused sessions (~a working day).
 
@@ -192,13 +212,18 @@ never a hard kill.
 
 ## Watch out for
 
+> **STILL LIVE — the most valuable section in this file.** Several of these have since been
+> confirmed against the real manual and the real SoundFont; those are marked **✅ confirmed**
+> with what was found. Confirmed does not mean handled everywhere — it means the trap is real.
+
 ### Research traps — each would poison the build
 
 - **ManualsLib entry 819462 titled "KORG M1 OWNER'S MANUAL" is the 2006 *software plugin*
   manual.** It lists `RESONANCE` and a `RESONANCE Switch [OFF/ON]` — the switch exists
   *because* the hardware had none. **The hardware VDF has no resonance**, confirmed three
   ways. Use ManualsLib **898710** or Korg's own CDN PDF.
-- **There is a decoy drum list in the real manual.** An illustrative figure in the overview
+- **✅ CONFIRMED. There is a decoy drum list in the real manual.** The real 44-sound list is
+  transcribed in `data/sounds.ts` and a test asserts the decoy names never appear. An illustrative figure in the overview
   section reads "BASS DRUM 1 / PICCOLO SNARE / HI BONGO…" — the M1 has none of those. The
   real list is on p.138.
 - **The Korg Super Guide contradicts the Owner's Manual** on drum-kit ranges. It is
@@ -214,24 +239,30 @@ never a hard kill.
 
 ### Engine traps
 
-- **VDF cutoff keyboard tracking of `0` means 100% tracking**, not none — cutoff follows pitch
+- **✅ CONFIRMED, and handled. VDF cutoff keyboard tracking of `0` means 100% tracking**, not none — cutoff follows pitch
   1:1. Negative values are needed for *no* tracking. Silently affects every patch. Note the
   asymmetry: EG-Time tracking at 0 *is* off.
-- **`NT` means "No Tracking"** (fixed pitch), not "no transient". One ROM sample exposed twice
+- **✅ CONFIRMED from the manual verbatim: `NT` means "No Tracking"** — "(NT) = same pitch
+  regardless of key played" — not "no transient". One ROM sample exposed twice
   with tracking toggled — a per-multisound boolean.
 - **There are no velocity zones inside a multisound.** Velocity lives at Program level
   (DOUBLE with opposite-signed VDA sensitivities = continuous crossfade) or Combi level
   (`VELOCITY SW` hard split).
 - **Attack transients are separate multisounds**, layered via DOUBLE + OSC2 Delay Start — not
   concatenated onto loop bodies.
-- **DOUBLE mode must claim both slots atomically.** Allocating one and failing the other
+- **✅ HANDLED. DOUBLE mode must claim both slots atomically.** Allocating one and failing the other
   yields a half-voice.
-- **An uncaught exception in `process()` silences the node permanently.** Guard it.
-- **SF2 loop points are absolute offsets** into the global sample blob — rebase per sample by
-  subtracting `dwStart`. And **ffmpeg silently drops the WAV `smpl` chunk**; extract loop
-  points to JSON *before* resampling, then scale.
+- **✅ HANDLED. An uncaught exception in `process()` silences the node permanently.** The voice
+  worklet catches, goes silent, and still returns `true`.
+- **✅ CONFIRMED, with a wrinkle. SF2 loop points are absolute offsets** into the global sample
+  blob — rebase per sample by subtracting `dwStart`. **But `spessasynth_core` already does it**,
+  so subtracting a second time is its own bug. And `loopEnd` is EXCLUSIVE, which had to be
+  measured because that library's own docs contradict each other (field comment says exclusive,
+  constructor `@param` says inclusive). Both measured, not assumed: `scripts/probeSf2.ts`.
+  Also still true: **ffmpeg silently drops the WAV `smpl` chunk**; extract loop points to JSON
+  *before* resampling, then scale.
 - **sfizz was archived in June 2026.** Use `spessasynth_core`.
-- **Vite worklet import:** use `?worker&url`, never plain `?url` — the latter ships raw
+- **✅ HANDLED. Vite worklet import:** use `?worker&url`, never plain `?url` — the latter ships raw
   uncompiled `.ts` as a data URI. SynthStack's `context.ts` documents this; copy the comment.
 
 ### Effects
