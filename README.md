@@ -7,9 +7,10 @@ envelopes, a 33-algorithm effects section, 8-timbre Combinations, and (optionall
 sequencer. Korg's official factory bank has been decoded, so the 100 factory programs and 100
 combinations are **importable, not reconstructable**.
 
-**Status: Phases 0–1 complete.** The shell boots on port 5184 and one command builds the full
-sample bank — 100 multisounds, 44 drum sounds, 594 key zones, every loop seam verified.
-Phase 2 (the voice engine) is next. Repo: `github.com/TxVibeCoder/BorgM1`.
+**Status: Phases 0–2 complete — it plays.** 16-voice polyphony (8 in DOUBLE) from the on-screen
+keybed or over Web MIDI, all 100 multisounds selectable, one command builds the sample bank.
+Phase 3 (the 143-parameter program layer and the real panel) is next.
+Repo: `github.com/TxVibeCoder/BorgM1`.
 
 ```bash
 npm install && npm run dev

@@ -18,7 +18,13 @@ import {
 } from '../../src/engine/sample/dwgsCore';
 import { DEFAULT_BANK_RATE } from '../../src/engine/sample/bakeCore';
 import { FIRST_SYNTHESIZED_MULTISOUND, MULTISOUNDS } from '../../data/sounds';
-import { loopSeamDiscontinuity } from '../../src/engine/sample/loopCore';
+import { loopSeamDiscontinuity, LOOP_GUARD_SAMPLES } from '../../src/engine/sample/loopCore';
+import {
+  hasGuard,
+  makePlayerState,
+  renderInto,
+  startPlayer,
+} from '../../src/engine/dsp/samplePlayerCore';
 
 describe('DWGS recipes', () => {
   it('covers exactly multisounds 77..99, in order, with matching names', () => {
@@ -112,9 +118,41 @@ describe('rendered DWGS samples', () => {
   it('are single-cycle tables looped over their full length', () => {
     for (const r of DWGS_RECIPES) {
       const s = renderRecipe(r);
-      expect(s.data.length).toBe(DWGS_TABLE_SIZE);
       expect(s.loopStart).toBe(0);
       expect(s.loopEnd).toBe(DWGS_TABLE_SIZE);
+    }
+  });
+
+  it('CARRY THE GUARD REGION — without it every synthesized sound is silent', () => {
+    // These skip bakeSample (nothing to resample, loop already exact) and the first
+    // version skipped the guard with it. A 256-sample table with loopEnd 256 makes the
+    // 4-point interpolator read data[256] and data[257] off the end: undefined, then NaN,
+    // then silence, across all 23 sounds. The producer emits the guard so no caller can
+    // forget it.
+    for (const r of DWGS_RECIPES) {
+      const s = renderRecipe(r);
+      expect(s.data.length, `${r.name}`).toBe(DWGS_TABLE_SIZE + LOOP_GUARD_SAMPLES);
+      expect(hasGuard(s), `${r.name} fails the player's own guard check`).toBe(true);
+      // and the guard must CONTINUE the wave, i.e. hold the first loop samples
+      for (let i = 0; i < LOOP_GUARD_SAMPLES; i++) {
+        expect(s.data[DWGS_TABLE_SIZE + i]!).toBeCloseTo(s.data[i]!, 6);
+      }
+    }
+  });
+
+  it('renders finite audio through the player, not NaN', () => {
+    // The end-to-end version of the bug above: the symptom was silence, which points
+    // nowhere near the cause.
+    for (const r of DWGS_RECIPES) {
+      const s = renderRecipe(r);
+      const st = makePlayerState();
+      startPlayer(st, 0);
+      const out = new Float32Array(2048);
+      renderInto(out, 0, out.length, s, st, 1.37, 1.37, 1, 1); // non-integer increment
+      expect(out.every(Number.isFinite), `${r.name} produced NaN`).toBe(true);
+      let peak = 0;
+      for (const v of out) peak = Math.max(peak, Math.abs(v));
+      expect(peak, `${r.name} is silent`).toBeGreaterThan(0.1);
     }
   });
 

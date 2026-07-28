@@ -19,6 +19,8 @@
  * table IS exactly one period.
  */
 
+import { truncateWithGuard } from './loopCore';
+
 /**
  * Samples per cycle. 256 at the 32 kHz bank rate puts the root at exactly 125 Hz, so the
  * loop length is an integer and the wave is perfectly periodic across it — the loop-seam
@@ -295,12 +297,22 @@ export function renderCycle(harmonics: HarmonicTable, tableSize = DWGS_TABLE_SIZ
   return out;
 }
 
-/** Render a recipe as a looped single-cycle sample plus the metadata the bank needs. */
+/**
+ * Render a recipe as a looped single-cycle sample plus the metadata the bank needs.
+ *
+ * THE GUARD IS APPLIED HERE, not left to the caller. These tables skip `bakeSample`
+ * (there is nothing to resample and the loop is already exact), and the first version
+ * skipped the guard along with it — so the 4-point interpolator read data[256] and
+ * data[257] off the end of a 256-sample table, produced NaN, and every one of the 23
+ * synthesized multisounds was silent. Emitting the guard from the producer means no
+ * caller can forget it again.
+ */
 export function renderRecipe(recipe: DwgsRecipe, tableSize = DWGS_TABLE_SIZE) {
+  const cycle = renderCycle(recipe.harmonics, tableSize);
   return {
     index: recipe.index,
     name: recipe.name,
-    data: renderCycle(recipe.harmonics, tableSize),
+    data: truncateWithGuard(cycle, { loopStart: 0, loopEnd: tableSize }),
     /** The whole table is the loop, so the wrap is exact by construction. */
     loopStart: 0,
     loopEnd: tableSize,
