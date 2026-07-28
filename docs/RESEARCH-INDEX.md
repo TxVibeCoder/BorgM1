@@ -16,15 +16,36 @@ not a dependency — the build does not read it.
 | The 100-multisound and 44-drum lists | `data/sounds.ts` | 1 |
 | `NT` = No Tracking, confirmed verbatim from the manual | `data/sounds.ts` | 1 |
 | Multisounds have a limited pitch range and may not sound high up | `bank.json` key ranges | 1 |
+| The 143-byte Program Parameter table, all 139 parameters | `data/programParams.ts` | 3 |
+| The EG-time bitfield packing (enable and polarity are separate bits) | `data/programParams.ts`, `dsp/modCore.ts` | 3 |
+| Cutoff keyboard tracking: 0 means 100%, confirmed verbatim | `dsp/lowpassCore.ts` | 3 |
 
 **Still to extract**, in the phase that needs it:
 
 | Not yet extracted | Needed by |
 |---|---|
-| The 143-byte Program Parameter table (every parameter, range, and the EG-time bitfield packing) | Phase 3 |
 | The 33 effect algorithms and their quantization grids | Phase 4 |
 | The 124-byte Combination table | Phase 5 |
 | `preload/final.py` — the 100 factory programs and 100 combinations | Phase 6 |
+
+## Where the tables actually are — read the IMAGES, not the OCR
+
+The MIDI-implementation appendix is scanned cleanly enough to read directly at full
+resolution. **The OCR text layers are useless for these pages**: every table is multi-column
+and the OCR interleaves the columns, so byte 63's name lands next to byte 16's range. Phase 3
+transcribed p.127 from the image in one pass after the OCR wasted a search.
+
+| Page | Table | What it is | Status |
+|---|---|---|---|
+| `pg/p127.png` | **TABLE 1** | **The 143-byte Program Parameter table.** Plus notes *1 (the EG-time SW & POLARITY bit layout), *2 (osc modes) and *3 (MG waveforms) | ✅ extracted, Phase 3 |
+| `pg/p128.png` | TABLES 2–4 | Combination (124 bytes), Global, Sequencer Control Data | Phases 5, 7 |
+| `pg/p129.png` | `*11` | **The 25-byte effect block and all 33 algorithms**, with their quantization grids | Phase 4 |
+| `pg/p130.png` | TABLE 5 | Program parameter **page/position → offset**. The independent cross-check on TABLE 1, and the hardware's own edit-page grouping | ✅ used, Phase 3 |
+| `pages/b131.png` | TABLE 6 | The same, for Combinations. Note `pg/` stops at p130 — this one is only in `pages/` | Phase 5 |
+
+The Edit Program Mode pages (`png/p021.png`–`png/p036.png`, manual pp.20–35) carry the
+per-parameter semantics and the display names. Note the filenames are offset by one from the
+printed page number: `png/p027.png` is printed page 26.
 
 **The SF2 is not here.** FluidR3_GM lives outside the payload; `scripts/bankConfig.ts` resolves
 it from `$BORGM1_SF2`, then `assets/`, then a sibling project's copy.

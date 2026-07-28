@@ -7,9 +7,11 @@ envelopes, a 33-algorithm effects section, 8-timbre Combinations, and (optionall
 sequencer. Korg's official factory bank has been decoded, so the 100 factory programs and 100
 combinations are **importable, not reconstructable**.
 
-**Status: Phases 0–2 complete — it plays.** 16-voice polyphony (8 in DOUBLE) from the on-screen
-keybed or over Web MIDI, all 100 multisounds selectable, one command builds the sample bank.
-324 tests green. Phase 3 — the 143-parameter program layer and the real panel — is next.
+**Status: Phases 0–3 complete — it plays and it edits.** 16-voice polyphony (8 in DOUBLE) from
+the on-screen keybed or over Web MIDI, all 100 multisounds selectable, and all **139 program
+parameters** editable on a five-page panel and audible in the engine. One command builds the
+sample bank. 552 tests green. Phase 4 — the effects section and the first fidelity gate — is
+next.
 
 ## Quick start
 
@@ -66,20 +68,23 @@ copy. The output lands in `public/bank/` (gitignored). Sources and licences are 
 data/            build-time + shared data
   sounds.ts        the 100 multisound / 44 drum manifests, from the 1988 manual
   sourceMap.ts     which GM preset each sound is built from
+  programParams.ts THE 143-byte SysEx program table — 139 parameters, with byte codecs
   schema.ts        ControlDef + validation
 scripts/         build-time only, never shipped
   buildBank.ts     THE bank builder. One command; runs the loop-seam gate on its own output
   probeSf2.ts      measures the SoundFont instead of trusting its docs
 src/engine/
   sample/          bake pipeline: resample -> loop -> crossfade -> guard -> int16
-  dsp/             levelTimeEgCore, lowpassCore, samplePlayerCore
+  dsp/             levelTimeEgCore, lowpassCore, samplePlayerCore, mgCore, modCore
   voice/           voiceAllocCore (16 slots), keymapCore, voiceEngineCore, keyMap
+  program/         programConfigCore — params bag -> engine config, the Phase 3 seam
   worklets/        thin shells only — voice.worklet, pcmTap.worklet
   bankLoader.ts    Cache API; converts Int16 -> float once at load
   engineBridge.ts  the ONE seam between React and the engine
 src/ui/          stage geometry, controls, keybed, theme
-src/state/       m1State.ts — the single serializable tree
-test/unit/       324 tests, Node environment
+  panel/           the five-page panel: layout, Section, ParamControl, EgGraph, Joystick
+src/state/       m1State.ts — the single serializable tree; store.ts — its one instance
+test/unit/       552 tests, Node environment
 ```
 
 **Pure cores, thin shells.** Everything audible lives in a `*Core.ts` with no Web Audio types,
@@ -100,8 +105,11 @@ character is sample + chorus + EQ + hall. If it doesn't match, the cause is unam
 
 ## Known limitations at this stage
 
-- **The program is a placeholder.** Flat envelopes, filter open, no filter EG — deliberately the
-  shape `I17 Organ 2` itself uses. Phase 3 replaces it with the real 143-parameter model.
+- **No effects.** Phase 4. The 25-byte effect block is reserved in the program record so the
+  143-byte layout is already complete and round-trips.
+- **No program browser, no WRITE.** Phase 6 owns those; the program name is display-only.
+- **DRUMS mode plays one drum per key** and unassigned keys are silent, which is authentic.
+  Assembling the four selectable Drum Kits is Phase 5/6.
 - **39 of 100 multisounds and 12 of 44 drums are approximated** from the nearest General MIDI
   timbre, because GM has no slot for the M1's own synthesised textures (`Lore`, `PanWave`,
   `Wire`…). They are flagged `approx` in `data/sourceMap.ts` and marked `~` in the UI; that

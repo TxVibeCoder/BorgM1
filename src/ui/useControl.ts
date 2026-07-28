@@ -1,0 +1,59 @@
+/**
+ * Store subscriptions for the panel.
+ *
+ * THE CONTRACT (src/ui/CONVENTIONS.md): a hook subscribes to the store, selects ONE
+ * control's value, and bails out when it is unchanged — so a store write re-renders only
+ * the control it changed. Never subscribe a panel component to the whole store.
+ *
+ * `useSyncExternalStore` provides the bail-out itself: it compares the snapshot with
+ * `Object.is` and skips the render when they match. That is why `getProgramParam` returns
+ * the raw value rather than going through `getState()`, which deep-copies through the JSON
+ * codec and would therefore return a fresh object every time and defeat the comparison
+ * entirely — 139 controls re-rendering on every knob movement.
+ */
+
+import { useSyncExternalStore } from 'react';
+import { m1Store } from '../state/store';
+
+/** One program parameter's current value. */
+export function useControl(id: string): number | string {
+  return useSyncExternalStore(
+    (cb) => m1Store.subscribe(cb),
+    () => m1Store.getProgramParam(id) ?? 0,
+    () => m1Store.getProgramParam(id) ?? 0,
+  );
+}
+
+/**
+ * The oscillator mode. UI-SPEC §4: this is THE flag — every `2` control greys out when it
+ * is not DOUBLE, from one subscription rather than 60.
+ */
+export function useOscMode(): string {
+  return useSyncExternalStore(
+    (cb) => m1Store.subscribe(cb),
+    () => m1Store.oscMode,
+    () => m1Store.oscMode,
+  );
+}
+
+/** True when oscillator 2 is live. The single `enabled` flag the panel passes down. */
+export function useOsc2Enabled(): boolean {
+  return useOscMode() === 'DOUBLE';
+}
+
+export function useProgramName(): string {
+  return useSyncExternalStore(
+    (cb) => m1Store.subscribe(cb),
+    () => m1Store.programName,
+    () => m1Store.programName,
+  );
+}
+
+/** Whether a plugin-era extension is on. They default OFF and must heal to OFF (CLAUDE.md). */
+export function useExtension(id: 'resonance' | 'insertFx'): boolean {
+  return useSyncExternalStore(
+    (cb) => m1Store.subscribe(cb),
+    () => m1Store.getExtension(id),
+    () => m1Store.getExtension(id),
+  );
+}

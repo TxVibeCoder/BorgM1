@@ -6,73 +6,51 @@
  * tree that re-renders for unrelated reasons.
  *
  * React calls imperative methods here; nothing in this file imports React.
+ *
+ * PHASE 3 replaced the flat placeholder program this file used to build inline. The
+ * parameter values now live in the state tree, `programConfigCore` maps them onto the
+ * engine's config, and this file's remaining job is the impure half: turning a multisound
+ * INDEX into actual PCM, and getting the result across to the worklet.
  */
 
 import { loadBank, type BankMultisound, type LoadedBank } from './bankLoader';
 import { StudioContext } from './context';
-import { ampEgConfig, filterEgConfig, pitchEgConfig } from './dsp/levelTimeEgCore';
+import { buildProgramConfig, type OscSource } from './program/programConfigCore';
 import { buildKeymap, type KeyZoneSpec } from './voice/keymapCore';
-import type { SerializedOsc, SerializedProgram } from './voiceMessages';
-import type { OscMode } from './voice/voiceEngineCore';
+import type { SerializedProgram, SerializedSample } from './voiceMessages';
+import { m1Store } from '../state/store';
 
 export interface BridgeStatus {
   powered: boolean;
   bankLoaded: boolean;
   bankError: string | null;
-  multisound: number;
-  oscMode: OscMode;
 }
 
 type Listener = (s: BridgeStatus) => void;
 
-/**
- * A flat, neutral program: instant attack, full sustain, filter wide open, no filter EG.
- *
- * That is not a placeholder — it is the shape `I17 Organ 2` actually uses, and it is the
- * right default for Phase 2 because it makes the SAMPLE audible with nothing layered on
- * top. Phase 3 replaces this with the real 143-parameter model from the SysEx table.
- */
-function neutralOsc(keymap: Uint16Array, samples: SerializedOsc['samples']): SerializedOsc {
-  return {
-    keymap,
-    samples,
-    level: 0.7,
-    octave: 0,
-    interval: 0,
-    detune: 0,
-    ampEg: ampEgConfig({
-      attackTime: 0, attackLevel: 1, decayTime: 0, breakPoint: 1,
-      slopeTime: 0, sustainLevel: 1, releaseTime: 25,
-    }),
-    filterEg: filterEgConfig({
-      attackTime: 0, attackLevel: 0, decayTime: 0, breakPoint: 0,
-      slopeTime: 0, sustainLevel: 0, releaseTime: 0, releaseLevel: 0,
-    }),
-    pitchEg: pitchEgConfig({
-      startLevel: 0, attackTime: 0, attackLevel: 0, decayTime: 0,
-      releaseTime: 0, releaseLevel: 0,
-    }),
-    cutoffHz: 16000,
-    egIntensity: 0,
-    // -99 is NO tracking. 0 would mean 100% tracking (the documented trap) and is NOT a
-    // neutral default, however much it looks like one.
-    cutoffTracking: -99,
-    velocitySensitivity: 0.6,
-  };
-}
+/** An oscillator's bank half: the keymap plus the sample table it indexes into. */
+type OscBankSource = OscSource<SerializedSample>;
 
 class EngineBridge {
   private studio = new StudioContext();
   private node: AudioWorkletNode | null = null;
   private bank: LoadedBank | null = null;
   private listeners = new Set<Listener>();
-  private status: BridgeStatus = {
-    powered: false,
-    bankLoaded: false,
-    bankError: null,
-    multisound: 6, // Organ2 — the acceptance-test sound
-    oscMode: 'SINGLE',
-  };
+  private status: BridgeStatus = { powered: false, bankLoaded: false, bankError: null };
+  /**
+   * Built keymaps, keyed by what determines them.
+   *
+   * Turning a knob re-pushes the whole program, and a program carries two 32 KB keymaps.
+   * Rebuilding those on every pointermove of a drag would burn ~4 MB/s of allocation to
+   * produce a byte-identical result, so they are cached on the only inputs that change
+   * them: the oscillator mode and the multisound index.
+   */
+  private readonly sourceCache = new Map<string, OscBankSource>();
+  /**
+   * Parameters mid-drag: pushed to the engine but not yet written to the store. Cleared as
+   * each one commits, so the store stays the single source of truth for everything settled.
+   */
+  private readonly pending = new Map<string, number | string>();
   /** Notes currently down, so the UI can light keys and a panic can clear them. */
   readonly heldNotes = new Set<number>();
 
@@ -144,62 +122,141 @@ class EngineBridge {
     return this.status.powered ? this.studio.audioContext : null;
   }
 
-  setMultisound(index: number): void {
-    this.emit({ multisound: index });
+  // ---- parameters -----------------------------------------------------------------------
+
+  /**
+   * Set one program parameter: store write plus engine push. The COMMIT path — knob release,
+   * double-click reset, and every discrete control.
+   */
+  setParam(id: string, value: number | string): void {
+    this.pending.delete(id);
+    m1Store.setProgramParam(id, value);
     this.pushProgram();
   }
 
-  setOscMode(mode: OscMode): void {
-    this.emit({ oscMode: mode });
+  /**
+   * Push a parameter to the engine WITHOUT writing the store. The drag path.
+   *
+   * A knob fires `onInput` on every pointermove, and a store write notifies every
+   * subscriber — so routing the drag through `setParam` would re-render the whole panel
+   * sixty times a second to change one number. The parameter is held here until the drag
+   * commits, which keeps the audio responding immediately while React sees one update.
+   */
+  previewParam(id: string, value: number | string): void {
+    this.pending.set(id, value);
     this.pushProgram();
   }
 
-  /** Build the serialized oscillator for one multisound index. */
-  private buildOsc(msIndex: number): SerializedOsc | null {
+  /** Extensions live outside the program (they are not 1988 parameters). */
+  setResonance(on: boolean): void {
+    m1Store.setExtension('resonance', on);
+    this.pushProgram();
+  }
+
+  private sampleOf(id: string): SerializedSample | null {
+    const meta = this.bank?.byId.get(id);
+    if (!meta) return null;
+    return {
+      offset: meta.byteOffset / 2,
+      length: meta.length,
+      loopStart: meta.loopStart,
+      loopEnd: meta.loopEnd,
+      rootKey: meta.rootKey,
+      fineCents: meta.fineCents,
+      sampleRate: meta.sampleRate,
+    };
+  }
+
+  /** One multisound's key zones, as a keymap plus the sample table it indexes. */
+  private buildMultisoundSource(msIndex: number): OscBankSource | null {
     const bank = this.bank;
     if (!bank) return null;
     const ms = bank.manifest.multisounds.find((m) => m.index === msIndex);
     if (!ms) return null;
 
-    const samples: SerializedOsc['samples'] = [];
+    const samples: SerializedSample[] = [];
     const byId = new Map<string, number>();
     const zones: KeyZoneSpec[] = [];
     for (const z of ms.zones) {
       let idx = byId.get(z.sampleId);
       if (idx === undefined) {
-        const meta = bank.byId.get(z.sampleId);
-        if (!meta) continue;
+        const s = this.sampleOf(z.sampleId);
+        if (!s) continue;
         idx = samples.length;
         byId.set(z.sampleId, idx);
-        samples.push({
-          offset: meta.byteOffset / 2,
-          length: meta.length,
-          loopStart: meta.loopStart,
-          loopEnd: meta.loopEnd,
-          rootKey: meta.rootKey,
-          fineCents: meta.fineCents,
-          sampleRate: meta.sampleRate,
-        });
+        samples.push(s);
       }
       zones.push({ keyLow: z.keyLow, keyHigh: z.keyHigh, sampleIndex: idx });
     }
-    return neutralOsc(buildKeymap(zones), samples);
+    return { keymap: buildKeymap(zones), samples };
+  }
+
+  /**
+   * The drum kit: every drum sound on its own key, exactly as the manifest places it.
+   *
+   * One key per sound, not a zone — a drum is a fixed-pitch one-shot, so spreading it over
+   * neighbouring keys would transpose it and turn a snare into a different drum. Keys with
+   * no drum assigned stay silent, which is what the hardware does.
+   */
+  private buildDrumSource(): OscBankSource | null {
+    const bank = this.bank;
+    if (!bank) return null;
+    const samples: SerializedSample[] = [];
+    const zones: KeyZoneSpec[] = [];
+    for (const d of bank.manifest.drums) {
+      const s = this.sampleOf(d.sampleId);
+      if (!s) continue;
+      // The drum's own root key, so it plays back at its recorded pitch on its assigned note.
+      zones.push({ keyLow: d.note, keyHigh: d.note, sampleIndex: samples.length });
+      samples.push({ ...s, rootKey: d.note, fineCents: d.fineCents });
+    }
+    return { keymap: buildKeymap(zones), samples };
+  }
+
+  private sourceFor(oscIndex: 1 | 2, msIndex: number, drums: boolean): OscBankSource | null {
+    const key = drums ? 'drums' : `ms:${msIndex}`;
+    const hit = this.sourceCache.get(key);
+    if (hit) return hit;
+    const built = drums ? this.buildDrumSource() : this.buildMultisoundSource(msIndex);
+    if (built) this.sourceCache.set(key, built);
+    void oscIndex;
+    return built;
   }
 
   private pushProgram(): void {
     if (!this.node || !this.bank) return;
-    const osc = this.buildOsc(this.status.multisound);
-    if (!osc) return;
-    // Oscillator 2 gets its own keymap object so the two halves never alias — the `1`/`2`
-    // rule in the UI depends on them being independently editable in Phase 3.
-    const osc2 = this.buildOsc(this.status.multisound) ?? osc;
-    const program: SerializedProgram = {
-      oscMode: this.status.oscMode,
-      resonance: 0, // extension, defaults OFF
-      osc: [osc, osc2],
-    };
+    const state = m1Store.getState();
+    // Mid-drag values sit on top of the committed tree, so the engine hears the knob as it
+    // moves while the store still holds the last settled value.
+    const params =
+      this.pending.size === 0
+        ? state.program.params
+        : { ...state.program.params, ...Object.fromEntries(this.pending) };
+    const drums = params.OSC_MODE === 'DRUMS';
+
+    const s1 = this.sourceFor(1, Number(params.OSC1_MULTISOUND ?? 0), drums);
+    const s2 = this.sourceFor(2, Number(params.OSC2_MULTISOUND ?? 0), drums);
+    if (!s1) return;
+    const src2 = s2 ?? s1;
+
+    // The engine's config is built from the parameter model; only the PCM is supplied here.
+    // `buildProgramConfig` coalesces, so a hand-edited bundle cannot reach the worklet with
+    // an out-of-range value. Generic in the sample type, so what comes back IS the wire
+    // format — no cast, and no field can be dropped in transit.
+    const program: SerializedProgram = buildProgramConfig<SerializedSample>(
+      params,
+      [s1, src2] as [OscSource<SerializedSample>, OscSource<SerializedSample>],
+      { resonance: state.extensions.resonance ? 1 : 0 },
+    );
     this.node.port.postMessage({ type: 'program', program });
   }
+
+  /** Re-push after something outside the params bag changed (bank load, extension toggle). */
+  refresh(): void {
+    this.pushProgram();
+  }
+
+  // ---- performance ------------------------------------------------------------------------
 
   noteOn(note: number, velocity = 100): void {
     if (!this.node) return;
@@ -214,6 +271,16 @@ class EngineBridge {
 
   setSustain(down: boolean): void {
     this.node?.port.postMessage({ type: 'sustain', down });
+  }
+
+  /** Joystick. X (-1..1) bends pitch; Y (-1..1) drives the MG and filter-sweep depths. */
+  setJoystick(x: number, y: number): void {
+    this.node?.port.postMessage({ type: 'joystick', x, y });
+  }
+
+  /** Channel aftertouch, 0..1. */
+  setAftertouch(value: number): void {
+    this.node?.port.postMessage({ type: 'aftertouch', value });
   }
 
   allNotesOff(): void {
@@ -232,4 +299,5 @@ export const engineBridge = new EngineBridge();
  */
 if (import.meta.env.DEV) {
   (globalThis as unknown as { __borgm1?: unknown }).__borgm1 = engineBridge;
+  (globalThis as unknown as { __borgm1store?: unknown }).__borgm1store = m1Store;
 }

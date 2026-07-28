@@ -397,3 +397,175 @@ block and a dead instrument.
 chord 1.19, release returns to exact silence and frees the slot, 20 notes into a 16-slot pool
 steals cleanly with every sample finite, DOUBLE claims two slots per note. The sine's centroid
 landing on 268 Hz for note 60 (C4 = 261.6 Hz) validates the whole pitch chain end to end.
+
+---
+
+## 2026-07-28 — Phase 3: program layer + panel UI
+
+### The table is recovered, and it cross-checks against itself
+
+**TABLE 1 is on Owner's Manual p.127, not p.128.** The 143-byte Program Parameter table was
+transcribed from `pg/p127.png` in the research payload — a clean scan, fully legible, no OCR
+needed. The djvu/OCR text layers interleave its two columns and are unusable for this; the
+image is the source. p.128 is Tables 2-4 (Combination / Global / Sequencer).
+
+**Every offset is confirmed twice, from two independently-printed tables.** Manual p.130
+prints **TABLE 5, "PROGRAM PARAMETER PAGE, POSITION -> OFFSET"**, which lists the same
+offsets a second time grouped by edit page rather than by byte. Both agree on all 143. That
+is why the transcription is trustworthy without a third pass: the manual checks itself. A
+third, fully independent check exists in `preload/final.py`, the factory-bank decoder
+validated 20/20 against predicted multisamples; `programParams.test.ts` asserts the table
+against the 17 offsets that decoder reads.
+
+**143 BYTES, 139 PARAMETERS.** The gap is the 10-byte name (one field), the 25-byte effect
+block, and six bytes that pack several parameters each. `PLAN.md` says "143 parameters"
+throughout and that is a byte count — pinned by test so nobody later takes it as the control
+count and concludes four are missing.
+
+**The params bag stores DISPLAY values, not bytes.** The table owns `encodeParam` /
+`decodeParam`, so the byte layout lives in exactly one place. The payoff is Phase 6: Korg's
+preload is raw bytes, so `decodeProgram` is already the importer, written and tested a phase
+early at no extra cost.
+
+**The per-oscillator block is declared once and instantiated twice.** Manual p.127 says
+"103 SAME AS OSC-1(63~102)" and the code says the same thing: `OSC_BLOCK` carries offsets
+RELATIVE to its base and `oscBlock(1|2)` places it. The `1`/`2` rule is not only a UI
+principle — applied to the data it makes the two halves structurally unable to drift, and a
+test asserts every OSC-1 parameter has an OSC-2 twin at exactly +40.
+
+**Except MULTISOUND and OCTAVE, which are NOT at +40.** Bytes 12/13 are oscillator 1's and
+14/15 are oscillator 2's — per-oscillator controls that live in the *common* block, two apart
+and interleaved. The +40 rule does not reach them, and applying it there would read the pitch
+EG as a multisound number. Found by the test, which is why it is now pinned separately.
+
+### Two traps, and they point in opposite directions
+
+**Confirmed from the manual, verbatim: VDF cutoff keyboard tracking of 0 means 100%
+tracking.** Manual p.27: *"The change of Cutoff and the change of pitch are equal when set to
+0."* `lowpassCore.keyboardTrackingRatio` already had this right and was left alone.
+
+**Unresolved, and deliberately left alone: what NEGATIVE cutoff tracking should do.** The
+same page says *"The opposite occurs when setting to '-'"*, which reads as an inverted slope
+— cutoff falling as pitch rises. The current mapping (`amount = 1 + tracking/99`) instead
+reaches *no* tracking at -99 and never inverts. The accompanying diagram is ambiguous: it
+shows the `<0` line shallower than `+0`, not obviously descending. Both readings are
+defensible from the page. **Left as-is**, because changing it would move every patch on one
+sentence's reading and would perturb the golden buffers; flagged here so the Phase 4 A/B
+against a real recording can settle it with evidence rather than argument. A LABELLED GUESS,
+not a verified behaviour.
+
+**EG-time tracking of 0 genuinely IS off, and that asymmetry is the trap.** Bytes 99-102 each
+hold four three-state switches where the ENABLE and the POLARITY are separate bits four apart
+(manual p.127 note *1), and pp.26-27 say *"with 0 having no effect"*. So two parameters that
+read almost identically on a panel mean opposite things at zero. Both are documented at their
+definitions in `modCore.ts`, together, because the danger is precisely that someone tidies one
+to match the other.
+
+### Making every parameter audible cost more than the panel did
+
+Phase 3's done-criterion is "turning any control changes the sound", and the Phase 2 engine
+had nowhere for two thirds of the table to land. Added as pure cores: **`mgCore`** (the two
+program-level MGs — Korg's name for the LFO) and **`modCore`** (EG-time scaling, signed amp
+velocity, amp keyboard tracking). Extended in `voiceEngineCore`: centre keys, delay start,
+MONO and HOLD, joystick and aftertouch inputs.
+
+**AMP VELOCITY SENSE is SIGNED, and the sign is load-bearing.** Byte 89 is `9D~63 : -99~99`.
+A DOUBLE program with opposite-signed sensitivities on its two oscillators is the M1's *only*
+velocity crossfade, because a multisound contains no velocity zones at all. Modelling it
+unsigned — which Phase 2 did, as `velocitySensitivity: 0..1` — would silently delete the whole
+technique. Measured in the browser: at +99, soft 0.039 / hard 0.246; at -99, soft 0.206 /
+hard 0.000.
+
+**The MGs are PROGRAM-level with per-oscillator ENABLE bits**, not one MG per oscillator.
+That is how the manual lays them out (bytes 19-26 common, bits 5 and 6 the enables), and it
+means they advance once per control block rather than once per slot — advancing per slot
+would have run them 16x fast on a full chord.
+
+**KEY SYNC off deliberately does NOT reset the phase.** Two notes held together then share one
+modulation phase and beat against each other, which is what a single shared hardware
+generator does.
+
+**The joystick and the aftertouch strip are Phase 3 UI, not Phase 5 polish.** Eleven
+parameters (bytes 27-37) are controller DEPTHS. Without something to move they would be
+editable and permanently silent, and "every parameter audible" would be false for eleven of
+them. The Y-axis split — up drives PITCH MG and the filter sweep, down drives FILTER MG — is
+Korg's arrangement and is why bytes 33-37 come in an up-half/down-half pair.
+
+### Undocumented curves added this phase — all CHOICES, not M1 facts
+
+MG frequency 0..99 -> 0.05..30 Hz (exponential) · MG delay 0..99 -> 0..3 s (linear) · OSC-2
+delay start 0..99 -> 0..1 s (linear) · VDF cutoff 0..99 -> 30..18000 Hz (exponential) ·
+EG-time modulation depth (+/-2 octaves of time at full amount) · PITCH MG full-scale depth
+(2 semitones) · amp keyboard tracking depth (one octave of gain across the tracking span).
+Each is labelled at its definition. The cutoff curve's top end matters most: at 99 the filter
+must be genuinely out of circuit, or the Phase 4 gate measures this curve instead of the
+sample.
+
+### Panel
+
+**Sections declare WHICH parameters, never WHERE.** 139 hand-placed coordinates is 139 chances
+to typo a number that afterwards looks like a design decision. `layout.ts` holds percentage
+regions straight out of UI-SPEC and computes cells; a test asserts every column fits its band
+and no two work-area columns overlap.
+
+**A coverage test asserts every parameter appears on some page**, and it earned its keep
+immediately: the filter EG section was declared and left off every page, so its eight bytes
+were reachable only by dragging a 7 px graph handle. A parameter that is in the table, wired
+to the engine, and on no page is invisible — the one failure mode that looks like success from
+every other angle.
+
+**Two EG graph components, and the difference is structural rather than a prop.** The amp
+graph has three level handles for four segments; the filter graph has four. That missing
+eighth parameter IS the difference, and a shared component with a `hasReleaseLevel` flag would
+be the same mistake wearing a disguise.
+
+**The drag path does not write the store.** `previewParam` pushes the engine without a store
+write and `setParam` commits on release, because a knob fires `onInput` per pointermove and a
+store write notifies every subscriber. Likewise the store grew direct scalar readers
+(`getProgramParam`, `programName`, `getExtension`) because `getState()` deep-copies through
+the JSON codec — correct for anyone taking a whole tree, but as a `useSyncExternalStore`
+snapshot it returns a fresh object every call and re-renders all 139 controls every frame.
+
+**Keymaps are cached on (mode, multisound).** A program push carries two 32 KB keymaps, and
+rebuilding them per pointermove would burn megabytes a second producing byte-identical output.
+
+### Two bugs fixed in passing, both pre-existing
+
+- **`VoiceEngine.render` double-counted its frame clock.** Both `render` and `renderChunk`
+  advanced `this.frames`, so `now` ran at twice real time and the allocator aged every voice
+  twice as fast in its steal score. Now advanced in one place.
+- **`voiceMessages.ts` restated every OscConfig field by hand**, so a parameter added to the
+  engine could be wired in the bridge and silently dropped in transit with nothing failing to
+  compile. It is now `Omit<OscConfig, 'samples'>` — the only field the wire format may
+  disagree about is the one that genuinely differs, because a transferred buffer cannot carry
+  a Float32Array view.
+
+### Verified by driving the running app, not only by tests
+
+Per CLAUDE.md's standing rule. At 48 kHz against the 32 kHz bank: note 60 rests at **263.7 Hz**
+(261.6 expected, validating the pitch chain end to end) · cutoff 99->20 drops peak 0.567->0.065
+· DOUBLE peaks at exactly 2x SINGLE (1.2175 / 0.6087) · the pitch MG sweeps the fundamental
+237-287 Hz against 3 Hz of jitter with it off · a bend of +/-12 semitones lands on exactly the
+same pitch as playing +/-12 semitones away (ratio 1.000 and 1.002) · the EG-time bitfield
+tracks up on `+`, inverts on `-`, and does nothing on `0` · all five pages render, greying
+33-43% of their controls in SINGLE and none in DOUBLE · the tree still round-trips with all
+139 parameters and both extensions off · no console errors.
+
+**A weak metric gave a confidently wrong answer twice**, which is the lesson Phase 1 already
+recorded and worth restating because it recurs. A full-spectrum peak-bin search reported the
+pitch bend as *inverted*; it was latching onto whichever harmonic happened to be loudest.
+Autocorrelation then reported the bent-up note an octave low, because every integer multiple
+of the true period correlates and a global maximum systematically prefers the longest lag in
+range. And an analyser whose FFT window is longer than the settle time reports the PREVIOUS
+note. The measurement that finally settled it compares two readings taken through the same
+biased detector, so the bias cancels and only the equality is claimed.
+
+### Deliberately still open
+
+**DRUMS mode plays one drum per key, and unassigned keys are silent** — verified: notes 36-96
+that carry a drum sound, note 41 does not. The bank's kit has duplicate note assignments
+(three kicks all on 36), so only one drum per key is reachable; assembling the four selectable
+Drum Kits is Phase 5/6 work, not Phase 3's.
+
+**No program browser, no WRITE, no COMPARE.** Phase 6 owns the browser; the name field is
+display-only for now.

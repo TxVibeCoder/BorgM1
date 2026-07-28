@@ -5,8 +5,15 @@
  */
 
 import { ampEgConfig, filterEgConfig, pitchEgConfig } from '../../src/engine/dsp/levelTimeEgCore';
+import { neutralMgConfig } from '../../src/engine/dsp/mgCore';
 import { buildKeymap } from '../../src/engine/voice/keymapCore';
-import type { BankSampleRef, OscConfig, ProgramConfig } from '../../src/engine/voice/voiceEngineCore';
+import {
+  neutralControllers,
+  neutralOscConfig,
+  type BankSampleRef,
+  type OscConfig,
+  type ProgramConfig,
+} from '../../src/engine/voice/voiceEngineCore';
 import { bakeSample } from '../../src/engine/sample/bakeCore';
 import { int16ToFloat } from '../../src/engine/sample/pcmCore';
 
@@ -35,15 +42,19 @@ export function testSample(freq = 220, rootKey = 60, sourceRate = 32000): BankSa
   };
 }
 
+/**
+ * Built on top of `neutralOscConfig` rather than restating every field.
+ *
+ * That is load-bearing for the golden buffers: when Phase 3 added nine modulation fields to
+ * OscConfig, a helper that listed fields by hand would have compiled fine and silently left
+ * them `undefined`, which reads as NaN in the DSP. Starting from the engine's own neutral
+ * config means a new parameter arrives here already defeated, and the golden buffers keep
+ * measuring what they were written to measure.
+ */
 export function testOsc(over: Partial<OscConfig> = {}): OscConfig {
-  const samples = [testSample()];
   return {
-    keymap: buildKeymap([{ keyLow: 0, keyHigh: 127, sampleIndex: 0 }]),
-    samples,
+    ...neutralOscConfig(buildKeymap([{ keyLow: 0, keyHigh: 127, sampleIndex: 0 }]), [testSample()]),
     level: 1,
-    octave: 0,
-    interval: 0,
-    detune: 0,
     // Flat envelopes by default: instant attack, full sustain, so a test measures the
     // sample and the filter rather than an envelope shape it did not ask for. This is
     // also exactly the shape `I17 Organ 2` uses.
@@ -60,11 +71,12 @@ export function testOsc(over: Partial<OscConfig> = {}): OscConfig {
       releaseTime: 0, releaseLevel: 0,
     }),
     cutoffHz: 12000,
-    egIntensity: 0,
     // -99 = NO tracking. Deliberately explicit: 0 would mean 100% tracking and make every
     // test's cutoff depend on the note it happened to play.
     cutoffTracking: -99,
-    velocitySensitivity: 0,
+    // Velocity flat, so a test that plays at velocity 100 measures the same thing as one
+    // that plays at 127.
+    ampVelocity: 0,
     ...over,
   };
 }
@@ -74,6 +86,11 @@ export function testProgram(over: Partial<ProgramConfig> = {}): ProgramConfig {
     oscMode: 'SINGLE',
     osc: [testOsc(), testOsc()],
     resonance: 0,
+    pitchMg: neutralMgConfig(),
+    cutoffMg: neutralMgConfig(),
+    controllers: neutralControllers(),
+    mono: false,
+    hold: false,
     ...over,
   };
 }

@@ -8,8 +8,8 @@ plumbing. Estimates are focused sessions (roughly a working day).
 | 0 | Fork, gut, scaffold | ✅ **done** | 0.5 | An empty shell that boots and tests green |
 | 1 | Sample pipeline | ✅ **done** | 1.5–2 | A built sample bank on disk |
 | 2 | Voice engine | ✅ **done** | 2–3 | **Polyphonic playing from the keyboard** |
-| 3 | Program layer + panel UI | ◀ **next** | 2–3 | Every parameter editable and audible |
-| 4 | Effects | | 3–4 | **First fidelity gate — `I17 Organ 2` by hand** |
+| 3 | Program layer + panel UI | ✅ **done** | 2–3 | Every parameter editable and audible |
+| 4 | Effects | ◀ **next** | 3–4 | **First fidelity gate — `I17 Organ 2` by hand** |
 | 5 | Combinations | | 1.5–2 | 8-timbre splits and velocity switches |
 | 6 | Browser + factory bank | | 1–1.5 | **All 100 factory programs, loadable** |
 | 7 | Sequencer *(decide after 6)* | | 2–3 | 8-track recording and playback |
@@ -17,9 +17,10 @@ plumbing. Estimates are focused sessions (roughly a working day).
 **Phases 0–6 = ~12–16 sessions and a complete instrument.** Phase 7 is a separate decision.
 
 **Where things stand:** the instrument plays 16-voice polyphonic multisamples (8 in DOUBLE) from
-the on-screen keybed and over Web MIDI, with all 100 multisounds selectable. 324 unit tests,
-typecheck, build and bank build all clean. What is *not* built yet: the real parameter model
-(the program is a deliberately flat placeholder), effects, Combinations, and the browser.
+the on-screen keybed and over Web MIDI, with all 100 multisounds selectable, and **all 139
+program parameters are editable on a five-page panel and audible in the engine**. 552 unit
+tests, typecheck, build and bank build all clean. What is *not* built yet: effects,
+Combinations, and the browser.
 
 Every phase's decisions are recorded dated in `DECISIONS.md`; the notes below are the plan as
 written, kept intact so the plan and its outcome can be compared.
@@ -143,7 +144,7 @@ app and measure it before calling a phase done.
 
 ---
 
-## Phase 3 — Program layer + panel UI · 2–3 · ◀ NEXT
+## Phase 3 — Program layer + panel UI · 2–3 · ✅ DONE
 
 **Goal:** every one of the 143 program parameters editable, and audible.
 
@@ -183,9 +184,39 @@ is designed, not bolted on (a third of the centre column greys in SINGLE mode).
 > **Gate:** a data-driven test asserts every parameter's range and default against the SysEx
 > table — the equivalent of SynthStack's `moduleData.test.ts`.
 
+**Outcome.** All gates met. The table came off Owner's Manual **p.127** (TABLE 1) and is
+cross-checked against **p.130** (TABLE 5, the same offsets grouped by edit page) and against
+`preload/final.py`, the independently-validated factory decoder. **143 bytes, 139 parameters** —
+the difference is the name, the 25-byte effect block, and six bytes that pack several
+parameters each; pinned by test so the byte count is never read as a control count.
+
+Three corrections to the specifics above. The `1`/`2` rule applies to the **data** as well as
+the panel — the per-oscillator block is declared once with relative offsets and instantiated
+at 63 and 103 — **but MULTISOUND and OCTAVE are the exception**: they are per-oscillator
+controls living in the *common* block at 12/13 and 14/15, two apart, not +40. And the params
+bag stores **display values, not bytes**, which hands Phase 6 its factory-bank importer for
+free.
+
+Making every parameter *audible* turned out to cost more than the panel did: the Phase 2
+engine had nowhere for two thirds of the table to land. Two new pure cores (`mgCore` for the
+program's two MGs, `modCore` for the modulation rules) plus centre keys, delay start, MONO,
+HOLD, joystick and aftertouch. **AMP VELOCITY SENSE had to become SIGNED** — Phase 2 modelled
+it 0..1, which silently deletes the M1's only velocity-crossfade technique.
+
+**The strongest test in the phase is the audibility sweep**: one program with every modulation
+live, then change ONE parameter and require the render to differ. 135 of 139 covered, four
+skipped with reasons. It is the only test that catches a parameter which is in the table and
+never reaches the engine — and it found two (`JS_PITCH_MG_FREQ`, `JS_VDF_MG_FREQ`, never
+wired). A companion coverage test found a third failure of the same shape: the filter EG
+section was declared and placed on no page.
+
+Two pre-existing bugs fixed in passing: `render` double-counted the engine's frame clock, and
+`voiceMessages.ts` restated every OscConfig field by hand so a new parameter could be dropped
+in transit without a compile error.
+
 ---
 
-## Phase 4 — Effects · 3–4
+## Phase 4 — Effects · 3–4 · ◀ NEXT
 
 **Goal:** the first real fidelity gate.
 
@@ -194,6 +225,15 @@ effects section is a node swap rather than a refactor. Engine output is currentl
 that is deliberate, since the M1's stereo image comes from this section and its reverbs are
 mono-sum in / stereo out anyway. The `resonance` extension exists and defaults to 0; this gate
 must pass with it there.
+
+**The spec is already located, and it is complete.** Owner's Manual **p.129** prints `*11
+EFFECT PARAMETER` in full: the 25-byte block layout, all 33 algorithms with their parameters
+and ranges, and the quantization grids — including the piecewise LFO rate (`*11-3-2`:
+0.03 Hz steps to 3.00, 0.1 to 13.0, whole Hz to 30). Read it from `pg/p129.png`; it is as
+legible as p.127 was. `data/programParams.ts` already reserves bytes 38-62 so the record stays
+143 bytes, and `preload/final.py` decodes that block: 38/39 are the two effect types, 40-43
+the L/R balances, 44/45 the Output 3/4 pans, 46 the routing bitfield (bit4 = serial), 47-54
+and 55-62 the two 8-byte parameter blocks.
 
 33 algorithms plus `No Effect`. Four fewer implementations than it looks — the `I`/`II` variants
 of Chorus, Flanger, Phaser and Tremolo are **one modulation block with a phase-invert bit**.

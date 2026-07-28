@@ -27,6 +27,8 @@ type InMessage =
   | { type: 'noteOn'; note: number; velocity: number }
   | { type: 'noteOff'; note: number }
   | { type: 'sustain'; down: boolean }
+  | { type: 'joystick'; x: number; y: number }
+  | { type: 'aftertouch'; value: number }
   | { type: 'allNotesOff' };
 
 class VoiceProcessor extends AudioWorkletProcessor {
@@ -45,11 +47,19 @@ class VoiceProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (e: MessageEvent<InMessage>) => this.onMessage(e.data);
   }
 
-  /** Rebuild an oscillator's sample refs as views into the transferred blob. */
+  /**
+   * Rebuild an oscillator's sample refs as views into the transferred blob.
+   *
+   * Every other field is spread through unchanged. Restating them one by one — which is
+   * what this did before Phase 3 — makes adding an engine parameter a silent drop rather
+   * than a compile error, because the wire type and the engine type are checked separately.
+   * `SerializedOsc` is now `Omit<OscConfig, 'samples'>`, so the spread is exhaustive by
+   * construction and `samples` is the only thing left to translate.
+   */
   private hydrate(osc: SerializedOsc): OscConfig {
     const pcm = this.pcm;
     return {
-      keymap: osc.keymap,
+      ...osc,
       samples: osc.samples.map((s) => ({
         // subarray, not slice: a view is free and the blob outlives every voice.
         data: pcm ? pcm.subarray(s.offset, s.offset + s.length) : new Float32Array(4),
@@ -59,17 +69,6 @@ class VoiceProcessor extends AudioWorkletProcessor {
         fineCents: s.fineCents,
         sampleRate: s.sampleRate,
       })),
-      level: osc.level,
-      octave: osc.octave,
-      interval: osc.interval,
-      detune: osc.detune,
-      ampEg: osc.ampEg,
-      filterEg: osc.filterEg,
-      pitchEg: osc.pitchEg,
-      cutoffHz: osc.cutoffHz,
-      egIntensity: osc.egIntensity,
-      cutoffTracking: osc.cutoffTracking,
-      velocitySensitivity: osc.velocitySensitivity,
     };
   }
 
@@ -81,10 +80,15 @@ class VoiceProcessor extends AudioWorkletProcessor {
           break;
         case 'program':
           this.engine.setProgram({
-            oscMode: msg.program.oscMode,
-            resonance: msg.program.resonance,
+            ...msg.program,
             osc: [this.hydrate(msg.program.osc[0]), this.hydrate(msg.program.osc[1])],
           });
+          break;
+        case 'joystick':
+          this.engine.setJoystick(msg.x, msg.y);
+          break;
+        case 'aftertouch':
+          this.engine.setAftertouch(msg.value);
           break;
         case 'noteOn':
           this.engine.noteOn(msg.note, msg.velocity);

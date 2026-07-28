@@ -235,19 +235,31 @@ describe('engine behaviour', () => {
     expect(e.activeSlots).toBe(1);
   });
 
+  const velocityPeak = (vel: number, sens: number) => {
+    const osc = testOsc({ ampVelocity: sens });
+    const e = new VoiceEngine(SR);
+    e.setProgram(testProgram({ osc: [osc, osc] }));
+    e.noteOn(60, vel);
+    const out = render(e, 16);
+    let p = 0;
+    for (const v of out) p = Math.max(p, Math.abs(v));
+    return p;
+  };
+
   it('velocity scales level only when sensitivity is non-zero', () => {
-    const peak = (vel: number, sens: number) => {
-      const osc = testOsc({ velocitySensitivity: sens });
-      const e = new VoiceEngine(SR);
-      e.setProgram(testProgram({ osc: [osc, osc] }));
-      e.noteOn(60, vel);
-      const out = render(e, 16);
-      let p = 0;
-      for (const v of out) p = Math.max(p, Math.abs(v));
-      return p;
-    };
-    expect(peak(30, 0)).toBeCloseTo(peak(127, 0), 3);
-    expect(peak(30, 1)).toBeLessThan(peak(127, 1) * 0.6);
+    expect(velocityPeak(30, 0)).toBeCloseTo(velocityPeak(127, 0), 3);
+    expect(velocityPeak(30, 1)).toBeLessThan(velocityPeak(127, 1) * 0.6);
+  });
+
+  it('a NEGATIVE amp velocity sensitivity inverts the response', () => {
+    // Byte 89 is signed (9D~63 : -99~99) and the sign is not decoration: a DOUBLE program
+    // with opposite-signed sensitivities on its two oscillators is the M1's only velocity
+    // crossfade, because a multisound contains no velocity zones. Modelling this unsigned
+    // would delete the technique silently, so it is pinned here.
+    expect(velocityPeak(127, -1)).toBeLessThan(velocityPeak(30, -1) * 0.6);
+    // ...and the two signs genuinely cross, rather than one being a scaled copy.
+    expect(velocityPeak(127, 1)).toBeGreaterThan(velocityPeak(127, -1));
+    expect(velocityPeak(30, 1)).toBeLessThan(velocityPeak(30, -1));
   });
 
   it('sustain holds notes and lifting the pedal releases them', () => {
