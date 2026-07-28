@@ -15,9 +15,9 @@ const CANDIDATES = [
   process.env['BORGM1_SF2'],
   resolve(process.cwd(), 'assets/FluidR3_GM.sf2'),
   resolve(process.cwd(), '../BorgM1-research/FluidR3_GM.sf2'),
-  // A sibling project in this portfolio already carries a copy; use it rather than
-  // asking for a second 141 MB download. Treated as read-only.
-  resolve(process.cwd(), '<sibling soundfont dir>/FluidR3_GM.sf2'),
+  // A local sibling checkout may already carry a copy; use it rather than asking for a
+  // second 141 MB download. Treated as read-only. Override with BORGM1_SF2.
+  resolve(process.cwd(), process.env['BORGM1_SF2_SIBLING'] ?? '../sf2/FluidR3_GM.sf2'),
 ].filter((p): p is string => typeof p === 'string' && p.length > 0);
 
 /** Resolve the SF2 path, or throw with the list of places that were checked. */

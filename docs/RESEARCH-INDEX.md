@@ -1,7 +1,9 @@
 # Research index
 
-The source material lives at **`../BorgM1-research/`** — 193 MB, 560 files,
-preserved 2026-07-27 from a session scratchpad that would otherwise have been cleaned.
+The source material lives in a sibling directory, **`../BorgM1-research/`** — 193 MB, 560
+files, preserved 2026-07-27 from a session scratchpad that would otherwise have been cleaned.
+It is scanned manuals and Korg's copyrighted factory preload, so it is **not** in this repo and
+never will be.
 
 Move it to `research/` inside this project (and gitignore it) if you'd rather have everything in
 one tree. It is deliberately *not* committed — most of it is scanned PDFs.

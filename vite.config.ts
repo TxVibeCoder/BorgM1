@@ -3,10 +3,10 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 /**
- * PORT 5184 is BorgM1's, portfolio-wide (5173 SynthStack, 5180 another local project,
- * 5182 another local project, 8737 another local project, 8765 another local project's Docker server). `strictPort`
- * makes a collision fail loudly instead of silently drifting to 5185 — a
- * drifted port is how you end up A/B-ing against a stale build.
+ * PORT 5184 is BorgM1's, chosen so it does not collide with the other dev
+ * servers on this machine. `strictPort` makes a collision fail loudly instead
+ * of silently drifting to 5185 — a drifted port is how you end up A/B-ing
+ * against a stale build.
  */
 const PORT = 5184;
 

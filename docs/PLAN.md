@@ -35,7 +35,7 @@ written, kept intact so the plan and its outcome can be compared.
 
 **Goal:** a booting shell with SynthStack's proven infrastructure and none of its engine.
 
-Clone `<sibling SynthStack repo>` **from the working tree, not HEAD** — the uncommitted
+Clone the sibling SynthStack repo **from the working tree, not HEAD** — the uncommitted
 PC-only UX pass touches exactly the files worth inheriting, and the full 1304-test suite passes
 green on it. Then, in **one commit**, delete: all of `engine/dsp/`, `engine/worklets/` (keep
 `pcmTap`), `engine/modules/` (keep `sampler.ts`), `engine/sequencers/`, `router.ts`,
@@ -398,8 +398,8 @@ quantize, event edit.
 **Three reasons to skip it**, worth weighing honestly once Phases 0–6 are real:
 
 1. It is the largest and **least M1-specific** chunk — a generic MIDI sequencer.
-2. You already own three: another local project's editable canvas piano roll with `quantizeNotes`, another local project's
-   session grid with `.mid` import, and a MIDI pattern builder. A commercial DAW is on the PC.
+2. Three of my own already exist: an editable canvas piano roll with `quantizeNotes`, a session
+   grid with `.mid` import, and a MIDI pattern builder — plus a commercial DAW on the machine.
 3. **The reference plugin dropped it entirely.** Korg's own software M1 has no sequencer — the
    host sequences it.
 

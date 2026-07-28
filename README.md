@@ -111,7 +111,7 @@ tested in Node. The worklet marshals buffers and messages and nothing else.
 
 ## Shape of the build
 
-Forked from SynthStack (`<sibling SynthStack repo>`) for its shell, engine deleted in one
+Forked from SynthStack — a sibling synth project of mine — for its shell, engine deleted in one
 commit, M1 voice engine built fresh. That fork is done; the source repo is read-only and
 untouched.
 
@@ -166,5 +166,5 @@ working instrument in front of you.
 
 ## Port
 
-**5184.** Taken portfolio-wide: 5173 SynthStack, 5180 another local project, 5182 another local project, 8737 another local project,
-8765 another local project's Docker server.
+**5184**, and `strictPort` — a collision fails loudly rather than drifting to 5185, because a
+drifted port is how you end up A/B-ing against a stale build.

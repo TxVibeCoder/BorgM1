@@ -31,7 +31,7 @@ Target: play `I17 Organ 2` and have it sound like the record.
 
 ## Why here — and not in SynthStack
 
-SynthStack (`<sibling SynthStack repo>`) was the obvious host and it is the wrong one.
+SynthStack, a sibling Moog semi-modular project, was the obvious host and it is the wrong one.
 Verified by reading the code, not the docs:
 
 - **It is monophonic by design.** `src/engine/voice/monoVoice.ts` is design-locked to
@@ -184,8 +184,7 @@ never a hard kill.
 
 ## Constraints
 
-- **Port 5184.** Taken portfolio-wide: 5173 SynthStack, 5180 another local project, 5182 another local project,
-  8737 another local project, 8765 another local project's Docker server.
+- **Port 5184**, chosen so it does not collide with the other dev servers on this machine.
 - Vite + React 18 + TS strict. **No runtime audio or UI libraries** (`fft.js` test-only).
 - Windows launcher `.cmd` on the fixed port, per portfolio convention.
 - **Factory bank belongs in the Cache API, not IndexedDB** — IndexedDB deserializes on
@@ -327,7 +326,7 @@ or keep it alongside.
   a public repo. SynthStack scrubs Moog names to cover names (Monarch, Anvil, Cascade,
   Courier). Legal risk is small; it is a visible break from the convention. Decide before the
   first commit — it lands in the directory, the port, and the repo.
-- **Sequencer.** Phase 6 is the largest, least M1-specific chunk, and you already own three
-  sequencers (another local project's editable piano roll, another local project's session grid, a MIDI pattern builder) plus a commercial DAW.
-  It is cleanly severable — sequencer tracks are fully independent of Combinations. Decide
-  after Phase 5 ships, when you'll know whether you want it.
+- **Sequencer.** Phase 6 is the largest, least M1-specific chunk, and three sequencers of my
+  own already exist — an editable piano roll, a session grid, and a MIDI pattern builder —
+  alongside a commercial DAW. It is cleanly severable: sequencer tracks are fully independent
+  of Combinations. Decide after Phase 5 ships, when you'll know whether you want it.

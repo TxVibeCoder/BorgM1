@@ -6,7 +6,7 @@ after a break.*
 ---
 
 You are picking up **BorgM1**, a browser emulator of the Korg M1 (1988) PCM workstation.
-Directory: `<repo root>`. Windows, PowerShell.
+Developed on Windows with PowerShell; paths below are relative to the repository root.
 
 **Phases 0–5 are done. It plays, it edits, it has its effects, and it is a workstation.** Your
 job is **Phase 6 — Browser + factory bank**. Do Phase 6 only.
@@ -33,8 +33,8 @@ press **COMBI** in the header, set the type to `SPLIT`, and check that the botto
 keyboard sounds different from the top. If you cannot hear it working, do not start editing it.
 
 `npm run build:bank` needs **FluidR3_GM.sf2** (MIT, 141 MB, deliberately not vendored),
-resolved from `$BORGM1_SF2`, then `assets/`, then `<sibling soundfont dir>/`. The
-third is a sibling project — **read-only, never modify it.**
+resolved from `$BORGM1_SF2`, then `assets/`, then a sibling checkout. If it resolves from a
+sibling, treat that copy as **read-only — never modify it.**
 
 ## What Phase 6 is
 
@@ -174,7 +174,7 @@ since Phase 0 and still unwired. Don't rewrite it and don't confuse the two.
 
 ## Do not
 
-- **Do not modify SynthStack** at `<sibling SynthStack repo>`. Fork source, read-only.
+- **Do not modify SynthStack**, the sibling repo this was forked from. Read-only.
 - **Do not commit the bank** (`public/bank/`, generated and gitignored) or the SF2.
 - **Do not add runtime audio or UI libraries.** Build-time and test-only deps are fine.
 - **Do not put a PRNG in the signal path.** Its absence is what makes byte-exact golden-buffer
